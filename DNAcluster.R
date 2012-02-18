@@ -27,6 +27,10 @@ seqEM <- function(tree, seqData, P, bf=c(0.25,0.25,0.25,0.25), init, iter=50, me
     ec
 }
 
+postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=srcLike)
+
+
+
 postR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,0.25), ecps){
     ncluster=dim(ecps)[2]
     n <- length(seqData)
@@ -67,7 +71,6 @@ logPostR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,
     tmpPost <- log(post)
     lookup <- log(contrast %*% P)
     ecn <- matrix(nrow=n,ncol=ncluster)
-
     for(l in 1:ncluster){
         post <- matrix(0, nrs, ncs)
         for(i in 1:n){
@@ -78,7 +81,6 @@ logPostR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,
             post = post + (tmpPost * ecps[i,l])
             ecn[i,l] <- mean(post)
         }
-
         for(i in 1:n){
             tmpSeq <- seqData[[i]]
             for(j in 1:nrs){
@@ -91,6 +93,7 @@ logPostR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,
     }
     return(ecn)
 }
+
 
 simseqEM <- function(tc, iter=100, seqLength=100, initRange = 0.05, edgeLength, P, method="cpp"){
     nTips <- length(tc$tip.label)
@@ -110,19 +113,28 @@ simseqEM <- function(tc, iter=100, seqLength=100, initRange = 0.05, edgeLength, 
     result
 }
 
+##' <description>
+##' Test the number of correctly identified clusters.
+##' <details>
+##' @title nCorrect
+##' @param tc The true tree.
+##' @param r A list of matrices of classification probabilities.
+##' @param p Cut off probabiltiy for classification. If p==0, use the cluster with highest probability as the classification result.
+##' @return The ratio of correctly identified clusters.
+##' @author Ziqian Zhou
 nCorrect <- function(tc, r, p=0){
     nTips <- length(tc$tip.label)
     inner <- (nTips+2):(nTips+tc$Nnode)
     groups <- list()
     ratioC <- 0
     for(i in 1:length(inner)){
-        groups[[i]] <- as.integer(tc$edge[which(tc$edge[,1] == inner[i]), 2])
+        groups[[i]] <- sort(as.integer(tc$edge[which(tc$edge[,1] == inner[i]), 2]))
     }
     for(i in 1:length(r)){
         idr <- list()
         maxr <- apply(r[[i]], 1, function(x) which(x==max(x)))
         for(j in 1:length(inner)){
-            idr[[j]] <- as.integer(which(maxr == j))
+            idr[[j]] <- sort(as.integer(which(maxr == j)))
             for(k in 1:length(inner)){
                 if(p==0) ratioC <- ratioC + identical(idr[[j]], groups[[k]])
                 else ratioC <- ratioC + as.integer(identical(idr[[j]], groups[[k]]) && min(r[[i]][idr[[j]],j]) > p)

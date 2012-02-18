@@ -23,6 +23,7 @@ image.DNAbin(workingAlign)
 workingPhy <- as.phyDat(workingAlign)
 
 
+
 ##################################################
 ## Distance matrix for sequences
 ## load the libraries
@@ -54,28 +55,59 @@ diag(distMat) <- 0
 ##################################################
 library(openNLP)
 
-hostDf <- read.csv(file = "rodent taxonomy.csv")[,1:5]
+hostDf <- read.csv(file = "rodent taxonomy.csv", sep =";")
 ## substr(hostDf$Species, regexpr(' ', hostDf$Species)+1, stop=nchar(as.character(hostDf$Species)))
 hostDf$Species <- sapply(X = hostDf$Species, FUN = tokenize)[2,]
+unique(finalDf$Species) %in% unique(hostDf$Species)
 
 unique(workingDf$Species)
-sp1 <- substr(workingDf$Species, regexpr('[\\.[:space:]]+', workingDf$Species) + 1, stop=nchar(workingDf$Species))
+workingDf$Species <- substr(workingDf$Species, regexpr('[\\.[:space:]]+', workingDf$Species) + 1, stop=nchar(workingDf$Species))
 reg <- 'ordi$'
-sp1 <- sub(reg, 'ordii', sp1)
-sp1 <- sub('boylei', 'boylii', sp1)
+workingDf$Species <- sub(reg, 'ordii', workingDf$Species)
+workingDf$Species <- sub('boylei', 'boylii', workingDf$Species)
+
+excluded <- c('nuttalli', 'humulis', 'megalotis', 'bottae', 'quadrivittatus', 'musculus')
+
+finalDf <- workingDf[!is.element(workingDf$Species, excluded),]
 
 masim <- sapply(1:(nSeq-1), function(x) sapply((x+1):nSeq, hostDist))
-## likelihood for speciation.
-hostCord <- function(host){
-    uniHost <- unique(host)
-    pos <- unlist(sapply(host, function(x) which(uniHost == x)))
-    cord <- matrix(0,nrow=length(host),ncol=length(uniHost))
-    for(i in 1:length(host))
-        cord[i,pos[i]] <- 1
-    cord
+
+##' <description>
+##' Calculate the distance between mammlian host of bacteria
+##' <details>
+##' @title Distance between mammalian host
+##' @param host
+##' @param obs
+##' @return
+##' @author Ziqian Zhou
+hostDist <- function(host, obs){
+    uniHost <- host$Species
+    uniMat <- matrix(,length(uniHost),length(uniHost))
+    maxDist <- (dim(hostDf)[2]+1) / 2
+    for(i in 2:length(uniHost)){
+        for(j in 1:(i-1)){
+            ientry <- host[i,]
+            jentry <- host[j,]
+            if(sum(ientry == jentry) == 0) uniMat[i,j] <- maxDist
+            else uniMat[i,j] <- min(which(host[i,] == hostDf[j,])) / 2
+        }
+    }
+    uniMat[upper.tri(uniMat)] <-  t(uniMat)[upper.tri(uniMat)]
+    diag(uniMat) <- 0
+    distMat <- matrix(, dim(obs)[1], dim(obs)[1])
+    for(i in 2:dim(obs)[1]){
+        for(j in 1:(i-1)){
+            iindex <- which(uniHost == obs$Species[i])
+            jindex <- which(uniHost == obs$Species[j])
+            distMat[i,j] <- uniMat[iindex, jindex]
+        }
+    }
+    distMat[upper.tri(distMat)] <-  t(distMat)[upper.tri(distMat)]
+    diag(distMat) <- 0
+    distMat
 }
 
-cord <- hostCord(sp1)
+hostDistMat <- hostDist(hostDf, finalDf)
 
 
 ##################################################
@@ -99,22 +131,46 @@ y <- distb[lower.tri(distb)]
 a <- tree.ls(y, X)
 b <- nnls(X, y)
 a <- nnls.tree(distb, tb)
-dataTree <- designObsCluster(6,2,distb)
 b <- nnls(dataTree$X, dataTree$y)
 b <- cluster.nnls(dataTree$y, dataTree$X)
 index <- c(1,5)
 library(Matrix)
 library(MatrixModels)
 
-initP <- c(rep(0.6,3),rep(0.4,3), rep(0.4,3), rep(0.6,3))
+dataTree <- designObsClade(distb)
+initP <- matrix(c(rep(0.55,3),rep(0.45,3), rep(0.45,3), rep(0.55,3)), 6,2)
+
 w <- combp(dataTree$X, initP)
-b <- cluster.nnls(dataTree$y, dataTree$X, w=w)
+b <- cluster.nnls(dataTree$y, dataTree$X, w = w)
 
 
+set.seed(42)
+b.result <- list()
+for(i in 1:1000){
+    p <- 0.5 + runif(12, 0, 0.1)
+    initP <- matrix(p, 6, 2)
+    b <- cluster.em(dataTree$y, dataTree$X, pMat = initP, maxIter = 100)
+    b.result[[i]] <- b$Ez
+}
+nCorrect(tc = tb, r = b.result)
+
+randomPMat <- function(percentDiff, m, n){
+    p <- runif(m*n, (1-percentDiff)/n, (1+percentDiff)/n)
+    pMat <- matrix(p, n, m)
+    pMat <- pMat / rowSums(pMat)
+}
+
+##################################################
+## Use real distance matrix from mammalian hosts:
+##################################################
+mamData <- designObsClade(hostDistMat)
+initMamP <- randomPMat(0.1, 6, 267)
+mamR1 <- cluster.em(mamData$y, mamData$X, pMat = initMamP, maxIter = 10)
 
 ##################################################
 ## EM aglorithm for host with mixed MVnormal
 ##################################################
+
 EMmix <- function(x, theta, fixsig = TRUE) {
     mu <- theta$mu
     sigma <- theta$sigma
@@ -223,7 +279,7 @@ library(inline)
 
 postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"
                                   ## node="integer", edge="integer", nTips="integer", mNodes="integer"
-                                 ), plugin="RcppArmadillo", body=srcLike)
+                                  ), plugin="RcppArmadillo", body=srcLike)
 
 b <- postRcpp(data=sc[tc$tip.label], P=P[1,1][[1]], contrast=contrast, nrs=nrs, ncs=ncs, ncos=18, bfs=c(0.25,0.25,0.25,0.25), ecps=ecps)
 
@@ -280,16 +336,13 @@ sum(sc[[2]]==sc[[3]])
 sum(sc[[4]]==sc[[3]])
 
 
-
-
 nrs <- as.integer(length(sc$a))
 ncs <- as.integer(attr(sc,"nc"))
 contrast <- attr(sc, "contrast")
+
 
 a <- pcl(tc, sc)
 P <- a$P[1,1][[1]]
 contrast <- a$contrast
 b <- contrast %*% P[1,1][[1]]
-
 d <- list(rep(1,5),rep(2,5),rep(3,5))
-

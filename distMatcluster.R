@@ -1,4 +1,66 @@
-##' <description>
+cluster.em <- function(y, X, pMat, sparse = FALSE, maxIter = 100, tol=1E-12){
+    M <- dim(pMat)[2]
+    wMat <- combp(X, pMat)
+    difference <- max(1, 100 * tol)
+    Ez <- pMat
+    p <- rep(1/M, M)
+    for(j in 1:maxIter){
+        ## M step:
+        if(sparse == FALSE){
+            mCluster <- cluster.nnls(y, X, w = wMat, sparse = sparse)
+        }
+        sigma.new <- sd(mCluster$x)
+        ## E step:
+        for(i in 1:M){
+            Ez[,i] <- p[i] * dnorm(mCluster$x[,i], sd=sigma.new)
+        }
+        Ez <- sweep(Ez, 1, rowSums(Ez), "/")
+        colSums.Ez <- colSums(Ez)
+        p <- colSums.Ez / sum(colSums.Ez)
+        wMat <- combp(X, Ez)
+        if(j > 1){
+            if(sum((x.old - mCluster$x)^2) < tol) break
+        }
+        x.old <- mCluster$x
+    }
+    list(fitted = mCluster$fitted, Ez = Ez, p = p, iter = j, convergence = sum((x.old - mCluster$x)^2))
+}
+
+
+##' ##' <description>
+##' Fitting the cluster using non-negative least square.
+##' <details>
+##' @title cluster.nnls
+##' @param y observed value
+##' @param X Design matrix
+##' @param pMat
+##' @param sparse Is it a sparse matrix?
+##' @return A list with residuals matrix res,  fitted value matrix fitted.
+##' @author Ziqian Zhou
+cluster.nnls <- function(y, X, w, sparse = FALSE){
+    if(any(is.na(y)))
+    {
+        ind = which(is.na(y))
+        X = X[-ind,,drop=FALSE]
+        y= y[-ind]
+    }
+    res <- fitted <- matrix(,dim(w)[1], dim(w)[2])
+    x <- matrix(, dim(X)[2], dim(w)[2])
+    if(sparse == FALSE){
+        for(i in 1:dim(w)[2]){
+            p <- w[,i]
+            fit <- clade.nnls(y, X, p, sparse = sparse)
+            res[,i] <- fit$residuals
+            fitted[,i] <- fit$fitted
+            x[,i] <- fit$x
+        }
+    }
+    else{
+    }
+    list(res = res, fitted = fitted, x = x)
+}
+
+##' ##' <description>
 ##' Fitting the cluster using non-negative least square.
 ##' <details>
 ##' @title cluster.nnls
@@ -8,19 +70,13 @@
 ##' @param sparse Is it a sparse matrix?
 ##' @return Fitted value
 ##' @author Ziqian Zhou
-cluster.nnls <- function(y, X, w=NULL, sparse = FALSE){
-    ## need to use nls
-    ## nnls() in R base
+clade.nnls <- function(y, X, w=NULL, sparse = FALSE){
+    ## need to use nnls() in R base
     ## or nnls for sparse matrices
     ## na.action
-    if(any(is.na(y))){
-        ind = which(is.na(y))
-        X = X[-ind,,drop=FALSE]
-        y= y[-ind]
-    }
     ## LS solution
     if(sparse == FALSE){
-        if(is.null(w))  {
+        if(is.null(w)){
             fit <- nnls(X, y)
         }
         else{
@@ -39,8 +95,13 @@ cluster.nnls <- function(y, X, w=NULL, sparse = FALSE){
     fit
 }
 
-combp <- function(X, p){
-    return(apply(X, 1, function(x) prod(p[as.logical(x[1:length(p)])])))
+combp <- function(X, pMat){
+    n <- dim(pMat)[1]
+    wMat <- matrix(, n*(n-1) / 2, dim(pMat)[2])
+    for(i in 1:dim(pMat)[2]){
+        wMat[,i] <- apply(X, 1, function(x) prod(pMat[as.logical(x),i]))
+    }
+    wMat
 }
 
 ##' <description>
@@ -50,41 +111,23 @@ combp <- function(X, p){
 ##' <details>
 ##' @title designObsCluster
 ##' @param n number of observation
-##' @param m number of clusters
 ##' @param yMat Input observed distances. Need to be in the form of
 ##' distance matrix.
-##' @param sparse Will the returned matrix be sparse?
+##' @param sparse Will the returned matrix be sparse? Need to be a logical value.
 ##' @return A design Matrix representing the cluster by a tree structure. And a vector of observed distance.
 ##' @author Ziqian Zhou
-designObsCluster <- function(n, m, yMat, sparse=FALSE){
+designObsClade <- function( yMat, sparse=FALSE){
+    if(!isSymmetric(yMat)) stop("the distance matrix must be symmetric")
+    n <- dim(yMat)[1]
     nC2 <- n*(n-1) / 2
     combn2 <- combn(n,2)
     y <- yMat[t(combn2)]
-    y <- rep(y, m*m)
-    if(!sparse){
-        X <- matrix(0, n*(n-1)*m^2/2, n*m+m)
-        matnC21 <- matnC22<- matnC2 <- matrix(0,nC2,n)
-        matnC21[cbind(1:length(combn2[1,]), combn2[1,])] <- 1L
-        matnC22[cbind(1:length(combn2[2,]), combn2[2,])] <- 1L
-        matnC2 <- matnC21 + matnC22
-
-        for(i in 1:m){
-            for(j in 1:m){
-                if(i!=j){
-                    X[(((i-1)*m + j - 1) * nC2 + 1) : (((i-1)*m + j) * nC2) , ((i-1) * n + 1):(i*n)] <- matnC21
-                    X[(((i-1)*m + j - 1) * nC2 + 1) : (((i-1)*m + j) * nC2) , ((j-1) * n + 1):(j*n)] <- matnC22
-                    X[(((i-1)*m + j - 1) * nC2 + 1) : (((i-1)*m + j) * nC2) , m*n+i] <- X[(((i-1)*m + j - 1) * nC2 + 1) : (((i-1)*m + j) * nC2) , m*n+j] <- 1
-                }
-                else{
-                    X[(((i-1)*m + j - 1) * nC2 + 1) : (((i-1)*m + j) * nC2) , ((i-1) * n + 1):(i*n)] <- matnC2
-                }
-            }
-        }
-        if(m == 2) X <- X[,-(n*m + m)]
+    if(!isTRUE(sparse)){
+        X <- matrix(0,nC2,n)
+        X[cbind(1:length(combn2[1,]), combn2[1,])] <- 1L
+        X[cbind(1:length(combn2[2,]), combn2[2,])] <- 1L
     }
-    ## else{
-    ## }
-    list(X = X, y=y)
+    list(X = X, y = y)
 }
 
 
