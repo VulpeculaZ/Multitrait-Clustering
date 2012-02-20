@@ -105,6 +105,42 @@ combp <- function(X, pMat){
 }
 
 ##' <description>
+##' Calculate the distance between mammlian host of bacteria
+##' <details>
+##' @title Distance between mammalian host
+##' @param host
+##' @param obs
+##' @return
+##' @author Ziqian Zhou
+hostDist <- function(host, obs){
+    uniHost <- host$Species
+    uniMat <- matrix(,length(uniHost),length(uniHost))
+    maxDist <- (dim(hostDf)[2]+1) / 2
+    for(i in 2:length(uniHost)){
+        for(j in 1:(i-1)){
+            ientry <- host[i,]
+            jentry <- host[j,]
+            if(sum(ientry == jentry) == 0) uniMat[i,j] <- maxDist
+            else uniMat[i,j] <- min(which(host[i,] == hostDf[j,])) / 2
+        }
+    }
+    uniMat[upper.tri(uniMat)] <-  t(uniMat)[upper.tri(uniMat)]
+    diag(uniMat) <- 0
+    distMat <- matrix(, dim(obs)[1], dim(obs)[1])
+    for(i in 2:dim(obs)[1]){
+        for(j in 1:(i-1)){
+            iindex <- which(uniHost == obs$Species[i])
+            jindex <- which(uniHost == obs$Species[j])
+            distMat[i,j] <- uniMat[iindex, jindex]
+        }
+    }
+    distMat[upper.tri(distMat)] <-  t(distMat)[upper.tri(distMat)]
+    diag(distMat) <- 0
+    distMat
+}
+
+
+##' <description>
 ##' Create the design matrix and format observed values for least square criteria.
 ##' The dimension of the design matrix will be: n(n-1)(m^2)/2 by nm+m.
 ##' Observed

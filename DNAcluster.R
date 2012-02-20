@@ -1,9 +1,9 @@
 ##' <description>
 ##' Use EM algorithm to calculate the probability of for clustering.
 ##' <details>
-##' @title
+##' @title Cluster Sequences Using EM Algorithm
 ##' @param tree
-##' @param seqData
+##' @param seqData Sequence information, in the data type of phyDat
 ##' @param P
 ##' @param bf Base frequency.
 ##' @param init Initial probability.
@@ -13,6 +13,7 @@
 ##' @author Ziqian Zhou
 seqEM <- function(tree, seqData, P, bf=c(0.25,0.25,0.25,0.25), init, iter=50, method="cpp"){
     nrs <- as.integer(length(seqData[[1]]))
+    ## ncs is number of unique codes in the sequence.
     ncs <- as.integer(attr(seqData,"nc"))
     contrast <- attr(seqData, "contrast")
     ncos <- dim(contrast)[1]

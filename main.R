@@ -1,26 +1,3 @@
-source("readSeq.R")
-source("DNAcluster.R")
-## read sequence file from a directory to a data frame.
-seqDf <- readSeq(path="./seqs_new")
-
-infoDf <- read.csv("seqinfo.csv", stringsAsFactors =FALSE)
-matchedDf <- matchSeq(seqDf, infoDf)
-workingDf <- subset(matchedDf, Seq != "Multiple matches" & Seq != "No match" & nchar(Seq) < 350 & nchar(Seq) > 320)
-hist(unlist(lapply(workingDf$Seq,FUN=nchar)))
-
-
-workingMat <- substring(workingDf$Seq[[1]], seq(1,nchar(workingDf$Seq[[1]])), seq(1,nchar(workingDf$Seq[[1]])))
-for(i in 2:length(workingDf$Seq)){
-    x <- workingDf$Seq[i]
-    xDNAbin <-substring(x, seq(1,nchar(x)),seq(1,nchar(workingDf$Seq[[1]])))
-    workingMat <- rbind(workingMat, xDNAbin)
-}
-rownames(workingMat) <- workingDf$Isolate
-workingDNAbin <- as.DNAbin(workingMat, fill.with.gaps = TRUE)
-
-workingAlign <- clustal(workingDNAbin)
-image.DNAbin(workingAlign)
-workingPhy <- as.phyDat(workingAlign)
 
 
 
@@ -50,64 +27,9 @@ for(i in 1:(nSeq-1)){
 }
 diag(distMat) <- 0
 
-##################################################
-## Distance matrix for host species
-##################################################
-library(openNLP)
 
-hostDf <- read.csv(file = "rodent taxonomy.csv", sep =";")
-## substr(hostDf$Species, regexpr(' ', hostDf$Species)+1, stop=nchar(as.character(hostDf$Species)))
-hostDf$Species <- sapply(X = hostDf$Species, FUN = tokenize)[2,]
-unique(finalDf$Species) %in% unique(hostDf$Species)
 
-unique(workingDf$Species)
-workingDf$Species <- substr(workingDf$Species, regexpr('[\\.[:space:]]+', workingDf$Species) + 1, stop=nchar(workingDf$Species))
-reg <- 'ordi$'
-workingDf$Species <- sub(reg, 'ordii', workingDf$Species)
-workingDf$Species <- sub('boylei', 'boylii', workingDf$Species)
 
-excluded <- c('nuttalli', 'humulis', 'megalotis', 'bottae', 'quadrivittatus', 'musculus')
-
-finalDf <- workingDf[!is.element(workingDf$Species, excluded),]
-
-masim <- sapply(1:(nSeq-1), function(x) sapply((x+1):nSeq, hostDist))
-
-##' <description>
-##' Calculate the distance between mammlian host of bacteria
-##' <details>
-##' @title Distance between mammalian host
-##' @param host
-##' @param obs
-##' @return
-##' @author Ziqian Zhou
-hostDist <- function(host, obs){
-    uniHost <- host$Species
-    uniMat <- matrix(,length(uniHost),length(uniHost))
-    maxDist <- (dim(hostDf)[2]+1) / 2
-    for(i in 2:length(uniHost)){
-        for(j in 1:(i-1)){
-            ientry <- host[i,]
-            jentry <- host[j,]
-            if(sum(ientry == jentry) == 0) uniMat[i,j] <- maxDist
-            else uniMat[i,j] <- min(which(host[i,] == hostDf[j,])) / 2
-        }
-    }
-    uniMat[upper.tri(uniMat)] <-  t(uniMat)[upper.tri(uniMat)]
-    diag(uniMat) <- 0
-    distMat <- matrix(, dim(obs)[1], dim(obs)[1])
-    for(i in 2:dim(obs)[1]){
-        for(j in 1:(i-1)){
-            iindex <- which(uniHost == obs$Species[i])
-            jindex <- which(uniHost == obs$Species[j])
-            distMat[i,j] <- uniMat[iindex, jindex]
-        }
-    }
-    distMat[upper.tri(distMat)] <-  t(distMat)[upper.tri(distMat)]
-    diag(distMat) <- 0
-    distMat
-}
-
-hostDistMat <- hostDist(hostDf, finalDf)
 
 
 ##################################################
@@ -261,7 +183,6 @@ trCl$Nnode <- 3
 tc$edge <- matrix(c(5,1,5,2,6,3,6,4,7,5,7,6),ncol=2 , byrow=TRUE)
 trCl$tip.label <- c("A","B","C","D", "E", "F")
 plot(trCl, "cladogram")
-tc <- read.tree(text = "((a,b,c),(d,e,f));")
 
 
 Ntip <- length(treeNJ$tip.label)
@@ -272,32 +193,48 @@ yy <- numeric(Ntip + Nnode)
 pc <- pml(tree = tc, data = sc)
 
 
+
 library(phangorn)
 library(abind)
 library(inline)
+library(RcppArmadillo)
+library(nnls)
 
 
-postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"
-                                  ## node="integer", edge="integer", nTips="integer", mNodes="integer"
-                                  ), plugin="RcppArmadillo", body=srcLike)
+postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines( "likelihood.cpp"), collapse = "\n" ))
 
-b <- postRcpp(data=sc[tc$tip.label], P=P[1,1][[1]], contrast=contrast, nrs=nrs, ncs=ncs, ncos=18, bfs=c(0.25,0.25,0.25,0.25), ecps=ecps)
 
 
 
 set.seed(42)
+tc <- read.tree(text = "((a,b,c),(d,e,f));")
 tc$edge.length <- c(0.3,0.1,0.1,0.1,0.3,0.1,0.1,0.1)
-sc <- simSeq(tc, l=500)
-
-plot(tc, "cladogram")
-
-ecps <- matrix(c(0.6,0.6,0.4,0.4,0.4,0.4,0.6,0.6), 4, 2)
-ecps2 <- matrix(c(0.51,0.49,0.51,0.49,0.49,0.51,0.49,0.51,0.49, 0.49, 0.51,0.49,0.51,0.49,0.49,0.51,0.49,0.51), 9, 2)
-
+sc <- simSeq(tc, l=30)
 a <- pcl(tc, sc)
 P <- a$P[1,1][[1]]
-system.time(temp <- seqEM(tree=tc, seqData=sc, P=P, init=ecps2, iter=50, method="cpp"))
+contrast <- attr(sc, "contrast")
+nrs <- as.integer(length(sc$a))
+ncs <- as.integer(attr(sc,"nc"))
+ecps <- matrix(c(0.6,0.6,0.4,0.4,0.4,0.4,0.6,0.6), 4, 2)
+initP <- matrix(c(rep(0.55,3),rep(0.45,3), rep(0.45,3), rep(0.55,3)), 6,2)
 
+
+b <- postRcpp(data=sc[tc$tip.label], P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=18, bfs=c(0.25,0.25,0.25,0.25), ecps=initP)
+
+
+sDNAc <- as.DNAbin(sc)
+distc <- as.matrix(dist.dna(sDNAb))
+y <- distb[lower.tri(distb)]
+dataTree <- designObsClade(distb)
+
+## try this
+debug(mtCluster)
+mtCluster(sc, P = P, distMat = distb, M = 2, initP=initP, maxIter = 50, tol = 1e-10)
+
+
+plot(tc, "cladogram")
+ecps <- matrix(c(0.6,0.6,0.4,0.4,0.4,0.4,0.6,0.6), 4, 2)
+system.time(temp <- seqEM(tree=tc, seqData=sc, P=P, init=ecps2, iter=50, method="cpp"))
 
 
 
