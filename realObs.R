@@ -1,3 +1,11 @@
+library(phangorn)
+## library(abind)
+library(inline)
+library(RcppArmadillo)
+library(nnls)
+library(openNLP)
+
+
 ###########################################################
 ## Process read sequence and host data
 ##################################################
@@ -12,14 +20,13 @@ source("./Source/DNAcluster.R")
 seqDf <- readSeq(path="./seqs_new")
 infoDf <- read.csv("seqinfo.csv", stringsAsFactors =FALSE, sep=";")
 matchedDf <- matchSeq(seqDf, infoDf)
-workingDf <- subset(matchedDf, Seq != "Multiple matches" & Seq != "No match" & nchar(Seq) < 350 & nchar(Seq) > 320)
+workingDf <- subset(matchedDf, Seq != "Multiple matches" & Seq != "No match" & nchar(Seq) < 350 & nchar(Seq) > 320)b
 hist(unlist(lapply(workingDf$Seq,FUN=nchar)))
 
 
 ##################################################
 ## Distance matrix for host species
 ##################################################
-library(openNLP)
 
 hostDf <- read.csv(file = "rodent taxonomy.csv", sep =";")
 ## substr(hostDf$Species, regexpr(' ', hostDf$Species)+1, stop=nchar(as.character(hostDf$Species)))
@@ -72,11 +79,7 @@ save(finalPhy, hostDistMat, file = "obs_data.RData")
 ## Clustering
 ##################################################
 
-library(phangorn)
-## library(abind)
-library(inline)
-library(RcppArmadillo)
-library(nnls)
+
 
 load("obs_data.RData")
 postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/likelihood.cpp"), collapse = "\n" ))

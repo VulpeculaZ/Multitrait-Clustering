@@ -46,18 +46,22 @@ cluster.nnls <- function(y, X, w, sparse = FALSE){
     }
     res <- fitted <- matrix(,dim(w)[1], dim(w)[2])
     x <- matrix(, dim(X)[2], dim(w)[2])
+    n <- length(y)
+    M <- dim(w)[2]
+    sig <- NULL
     if(sparse == FALSE){
-        for(i in 1:dim(w)[2]){
+        for(i in 1:M){
             p <- w[,i]
             fit <- clade.nnls(y, X, p, sparse = sparse)
             res[,i] <- fit$residuals
             fitted[,i] <- fit$fitted
             x[,i] <- fit$x
+            sig[i] <- fit$deviance / (n - M)
         }
     }
     else{
     }
-    list(res = res, fitted = fitted, x = x)
+    list(res = res, fitted = fitted, x = x, sig = sig)
 }
 
 ##' ##' <description>

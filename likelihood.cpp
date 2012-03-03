@@ -42,7 +42,7 @@ for(int l=0; l<ncluster; l++){
                 posti[k * nr + j] = posti[k * nr + j] / posti_rowsum[j];
             }
         }
-        ecn[i+l*n] = arma::as_scalar(arma::prod((posti % arma::exp(tmpPost)) * bf));
+        ecn[i+l*n] = arma::accu(arma::log((posti % arma::exp(tmpPost)) * bf));
     }
  }
 return Rcpp::wrap(ecn);
