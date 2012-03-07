@@ -37,28 +37,32 @@ cluster.em <- function(y, X, pMat, sparse = FALSE, maxIter = 100, tol=1E-12){
 ##' @param sparse Is it a sparse matrix?
 ##' @return A list with residuals matrix res,  fitted value matrix fitted.
 ##' @author Ziqian Zhou
-cluster.nnls <- function(y, X, w, sparse = FALSE){
-    if(any(is.na(y)))
-    {
-        ind = which(is.na(y))
-        X = X[-ind,,drop=FALSE]
-        y= y[-ind]
-    }
+cluster.nnls <- function(y, X, w, sparse = FALSE, nn = TRUE){
+    ## if(any(is.na(y)))
+    ## {
+    ##     ind = which(is.na(y))
+    ##     X = X[-ind,,drop=FALSE]
+    ##     y= y[-ind]
+    ## }
     res <- fitted <- matrix(,dim(w)[1], dim(w)[2])
     x <- matrix(, dim(X)[2], dim(w)[2])
+    sigma <- NA
     if(sparse == FALSE){
         for(i in 1:dim(w)[2]){
             p <- w[,i]
-            fit <- clade.nnls(y, X, p, sparse = sparse)
+            fit <- clade.nnls(y, X, p, sparse = sparse, nn = nn)
             res[,i] <- fit$residuals
             fitted[,i] <- fit$fitted
             x[,i] <- fit$x
+            sigma[i] <- fit$wSSE
         }
     }
     else{
+
     }
-    list(res = res, fitted = fitted, x = x)
+    list(res = res, fitted = fitted, x = x, sigma = sigma)
 }
+
 
 ##' ##' <description>
 ##' Fitting the cluster using non-negative least square.
@@ -70,7 +74,7 @@ cluster.nnls <- function(y, X, w, sparse = FALSE){
 ##' @param sparse Is it a sparse matrix?
 ##' @return Fitted value
 ##' @author Ziqian Zhou
-clade.nnls <- function(y, X, w=NULL, sparse = FALSE){
+clade.nnls <- function(y, X, w=NULL, sparse = FALSE, nn = TRUE){
     ## need to use nnls() in R base
     ## or nnls for sparse matrices
     ## na.action
@@ -80,8 +84,19 @@ clade.nnls <- function(y, X, w=NULL, sparse = FALSE){
             fit <- nnls(X, y)
         }
         else{
-            wsqrt <- sqrt(w)
-            fit <- nnls(wsqrt*X, wsqrt*y)
+            if(!isTRUE(nn)){
+                wfit<- lm.wfit(X, y, w =w)
+                wSSE <- sum(w * wfit$residuals^2)
+                fit <- list(residuals = wfit$residuals, fitted = wfit$fitted, x = wfit$coefficients, wSSE = wSSE)
+            }
+            else{
+                wsqrt <- sqrt(w)
+                nnfit <- nnls(X * wsqrt, y * wsqrt)
+                nnRes <- nnfit$residuals / wsqrt
+                nnx <- nnfit$x
+                nnFitted <- nnfit$fitted / wsqrt
+                fit <- list(residuals = nnRes, fitted = nnFitted, x = nnfit$x, wSSE = nnfit$deviance)
+            }
             ## betahat = fit$coefficients
             ## RSS = sum(fit$residuals^2)
             ## print(paste("RSS:", RSS))

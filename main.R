@@ -1,6 +1,3 @@
-
-
-
 ##################################################
 ## Distance matrix for sequences
 ## load the libraries
@@ -76,11 +73,6 @@ for(i in 1:1000){
 }
 nCorrect(tc = tb, r = b.result)
 
-randomPMat <- function(percentDiff, m, n){
-    p <- runif(m*n, (1-percentDiff)/n, (1+percentDiff)/n)
-    pMat <- matrix(p, n, m)
-    pMat <- pMat / rowSums(pMat)
-}
 
 ##################################################
 ## Use real distance matrix from mammalian hosts:
@@ -282,4 +274,4 @@ a <- pcl(tc, sc)
 P <- a$P[1,1][[1]]
 contrast <- a$contrast
 b <- contrast %*% P[1,1][[1]]
-d <- list(rep(1,5),rep(2,5),rep(3,5))
+
