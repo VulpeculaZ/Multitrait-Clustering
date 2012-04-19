@@ -173,24 +173,69 @@ P <- a$P[1,1][[1]]
 
 set.seed(42)
 simResult <- list()
+convResult <- list()
 for(i in 1:20){
     initP <- randomPMat(pDiff = 0.05, 2, 10)
-    aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.1, inLen = 0.2)
-    aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.1, inLen = 0.2, sig = 0.3)
-    mtCluster(seqData = aSeq, P = P, distMat = aDist, M=2, initP = initP, maxIter = 100, tol = 1e-4)
-    tryCatch(simResult[[i]] <- mtCluster(seqData = aSeq, P = P, distMat = aDist, M=2, initP = initP, maxIter = 100, tol = 1e-10)$Ez,
+    aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.3, inLen = 0.1, l=200)
+    aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.3, inLen = 0.1, sig = 0.5)
+    tryCatch({tempResult <- mtCluster(seqData = aSeq, P = P, distMat = aDist, M=2, initP = initP, maxIter = 100, tol = 1e-4); simResult[[i]] <- tempResult$Ez; convResult[[i]] <- tempResult$convergence},
              error =function(e)
          {a <<- list(initP=initP, seq = aSeq, dist =aDist)
           print(i)}
              )
 }
 
-nCorrect(tc = tc, r=simResult)
 
-errorSim <- mtCluster(seqData = aSeq, P = P, distMat = aDist, M=2, initP = errorSim$Ez, maxIter = 1)
-errorSim
-
-logsumexp <- function(x){
-   xmax <- which.max(x)
-   log1p(sum(exp(x[-xmax]-x[xmax])))+x[xmax]
+monotoneEM <- function(x){
+    mono <- 0
+    for(i in 1:length(x)){
+        if(any(x[[i]][-1] - x[[i]][-length(x[[i]])] < 0)){
+            mono <- mono + 1
+            print(i)
+        }
+    }
+    mono
 }
+
+nCorrect(tc = tc, r=simResult)
+monotoneEM(convResult)
+
+
+## is DNA monotone in EM???
+
+set.seed(42)
+simResult <- list()
+convResult <- list()
+for(i in 1:100){
+    initP <- randomPMat(pDiff = 0.05, 2, 10)
+    aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.3, inLen = 0.1, l=200)
+    tempResult <- DNACluster(seqData = aSeq, P = P, M=2, initP = initP, maxIter = 100, tol = 1e-4)
+    simResult[[i]] <- tempResult$Ez;
+    convResult[[i]] <- tempResult$convergence
+}
+
+## is DistMat monotone in EM???
+set.seed(42)
+simResult <- list()
+convResult <- list()
+
+for(i in 1:20){
+    initP <- randomPMat(pDiff = 0.05, 2, 10)
+    aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.1, inLen = 0.2, sig = 0.1)
+    tryCatch({tempResult <- DistCluster(distMat = aDist, M=2, initP = initP, maxIter = 100, tol = 1e-4); simResult[[i]] <- tempResult$Ez.old; convResult[[i]] <- tempResult$convergence},
+             error =function(e)
+         {a <<- list(initP=initP, dist =aDist)
+          print(i)}
+             )
+}
+
+nCorrect(tc = tc, r=simResult)
+monotoneEM(convResult)
+
+initP <- randomPMat(pDiff = 0.05, 2, 10)
+aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.1, inLen = 0.3, sig = 0.1)
+
+initP <- matrix(c(rep(0.1,5), rep(0.9,10), rep(0.1,5)), 10,2)
+
+tempResult <- DistCluster(distMat = aDist, M=2, initP = initP, maxIter = 100, tol = 1e-4)
+

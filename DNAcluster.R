@@ -80,7 +80,6 @@ logPostR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,
                 tmpPost[j,] <- lookup[tmpSeq[j],]
             }
             post = post + (tmpPost * ecps[i,l])
-            ecn[i,l] <- mean(post)
         }
         for(i in 1:n){
             tmpSeq <- seqData[[i]]
