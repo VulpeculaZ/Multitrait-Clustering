@@ -15,60 +15,62 @@
 ##' @param tol Tolerance,
 ##' @return A list. $Ez is the fitted value for clustering probability.
 ##' @author Ziqian Zhou
-mtCluster <- function(seqData, P, bf=c(0.25,0.25,0.25,0.25),  distMat, M, initP, maxIter, tol=1e-4, method = "cpp", sparse = FALSE){
-    distData <- designObsClade(distMat, sparse = FALSE)
-    y <- distData$y
-    X <- distData$X
-    wMat <- combp(X, initP)
+mtCluster <- function(seqData, P, bf=c(0.25,0.25,0.25,0.25),  obsHost, distMat, M, initP, maxIter=100, tol=1e-4, method = "cpp", sparse = FALSE, model="geom"){
+    M <- dim(initP)[2]
     Ez <- initP
-    p <- rep(1/M, M)
+    logLike.old <- NULL
+    p <- colSums(initP) / n
+    ## for sequence
     nrs <- as.integer(length(seqData[[1]]))
     ncs <- as.integer(attr(seqData,"nc"))
     contrast <- attr(seqData, "contrast")
     ncos <- dim(contrast)[1]
     P <- as.matrix(P)
-    x.old <- 1
-    logLike.old <- NULL
+    ## for hosts
+    hostLvl <- max(distMat)
+    hostNum <- max(obsHost)
+    q <- matrix(, hostNum, M)
+    hostClusters <- matrix(NA, hostNum, M)
+    obsDist <- distMat[obsHost,]
+    lambda <- rep(0.5, M)
     for(j in 1:maxIter){
-        ## M step:
-        if(sparse == FALSE){
-            mCluster <- cluster.nnls(y, X, w = wMat, sparse = sparse)
+        ## host:
+        if(model == "geom"){
+            for(i in 1:M){
+                poisObs <- matrix(,n, hostNum)
+                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
+                for(k in 1:hostNum){
+                    poisObs[,k] <- poisP[obsDist[,k]+1]
+                }
+                qMat <- sweep(poisObs, 1, Ez[,i], FUN ="*")
+                q[,i] <- colSums(qMat)
+                q[,i] <- exp(q[,i] - logsumexp(q[,i]))
+                lambda[i] <- 1 / (1 + sum(exp(qMat) * obsDist) / sum(exp(qMat)))
+                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
+                for(k in 1:hostNum){
+                    poisObs[,k] <- poisP[obsDist[,k]+1]
+                }
+                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
+                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
+            }
         }
-        ## ME
-        sigma.new <- sqrt(colSums(mCluster$x^2 * Ez) / colSums(Ez))
-        ## LSE
-        ## sigma.new <- sqrt(mCluster$sigma / colSums(wMat))
-        ## E step:
+        ## sequence:
         if(method=="rlog"){
             logec <- logPostR(seqData, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
         }
         if(method=="cpp"){
             logec <- postRcpp(seqData, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
         }
-        ## ME
-        for(i in 1:M){
-            ## use dexp likelihood
-            logfi <- (-mCluster$x[,i]) / sigma.new[i] - log(sigma.new[i])
-            ## use normal likelihood
-            ## logfi <- -(mCluster$x[,i]^2)
-            Ez[,i] <- log(p[i]) + logfi + logec[,i]
-        }
-        ## LS
-        ## logf2 <- apply(rbind(mCluster$res, sigma.new), 2, function(x) dnorm(x[1:(length(x)-1)], sd = x[length(x)], log=TRUE))
-        ## for(i in 1:M){
-        ##     logfi <- t(logf2[,i]) %*% X
-        ##     Ez[,i] <- log(p[i]) + logfi + logec[,i]
-        ## }
+
+        logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
         logRowSumsEz <- apply(Ez, 1, logsumexp)
         logLike <- sum(logRowSumsEz)
         Ez <- exp(sweep(Ez, 1, logRowSumsEz, "-"))
         colSums.Ez <- colSums(Ez)
         p <- colSums.Ez / sum(colSums.Ez)
-        wMat <- combp(X, Ez)
-        x.old <- mCluster$x
         if(any(is.na(Ez))){
             warning("NA is produce in the last iteration step. Convergence failed.")
-            return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, x=mCluster$x))
+            return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambda, q = q))
         }
         if(j == 1) {
             convergence <- logLike
@@ -88,7 +90,7 @@ mtCluster <- function(seqData, P, bf=c(0.25,0.25,0.25,0.25),  distMat, M, initP,
         logLike.old <- logLike
     }
     list(#fitted = mCluster$fitted,
-         Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, x=mCluster$x)
+         Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q)
 }
 
 
@@ -240,69 +242,66 @@ DistCluster <- function(P, bf=c(0.25,0.25,0.25,0.25),  distMat, M, initP, maxIte
 ##' Cluster observations with host information
 ##' <details>
 ##' @title Cluster Using Host information
-##' @param host A vector for the specis of hosts for the samples
-##' @param P A probability for changing the host
-##' @param hostMat Matrix of the host tree structure
+##' @param obsHost A vector for the specis of hosts for the samples
+##' @param distMat The distance matrix between hosts.
 ##' @param M Number of Clusters
 ##' @param initP Initial Probability
 ##' @param maxIter Maximum number of iterations
-##' @param tol Tolerance
+##' @param model. Available probabilistic models are geometric and poission(?).
+##' @param tol Tolerance for convergence.
 ##' @return A list. Ez is the fitted value for clustering probability.
 ##' @author Ziqian Zhou
-hostCluster <- function(obsHost, distMat, hostMat, M, initP, maxIter, method="poisson", tol=1e-4){
-    Ez <- initP
-    p <- colSums(initP)
+hostCluster <- function(obsHost, distMat, initP, maxIter=100, model="geom", tol=1e-4){
+    M <- dim(initP)[2]
+    logEzHost <- Ez <- initP
     logLike.old <- NULL
     n <- length(obsHost)
-    hostLvl <- max(hostMat[,1])
-    hostNum <- dim(hostMat)[2]
-    qMat <- matrix(nrow = hostNum, ncol = M)
+    p <- colSums(initP) / n
+    hostLvl <- max(distMat)
+    hostNum <- max(obsHost)
+    q <- matrix(, hostNum, M)
     hostClusters <- matrix(NA, hostNum, M)
     obsDist <- distMat[obsHost,]
-    lambda <- matrix(, M, hostNum)
+    lambda <- rep(0.5, M)
+    poisP <- NA
+    ## poisP <- matrix(dpois(x = rep(0:hostLvl, M) 0.5), M, hostLvl)
     for(j in 1:maxIter){
-        ## M step:
         ## Get the multinomial distribution for the hosts.
-                ## get lambda for the transition probability
-        if(method == "poisson"){
+        ## get lambda for the transition probability
+        if(model == "geom"){
             for(i in 1:M){
+                ## M step:
                 poisObs <- matrix(,n, hostNum)
-                wX <- sweep(obsDist, 1, Ez[,i], FUN="*")
                 ## lambda: M * hostNum matrix, with estimated lambda for poisson
-                lambda[i,] <- apply(wX, 2, sum) / p[i]
+                ## lambda[i,] <- apply(wX, 2, sum) / p[i] / n
+                ## E step
                 ## poisP: matrix for lookup the pmf for cluster i.
                 ## A hostLvl * hostNum matrix
-                poisP <- vapply(lambda[i,], FUN=function(x) dpois(1:hostLvl, x), FUN.VALUE = 1:hostLvl)
+                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
                 for(k in 1:hostNum){
-                    poisObs <- poisP[obsDist[,k],k]
+                    poisObs[,k] <- poisP[obsDist[,k]+1]
                 }
-                qMat[,i] <- colSum(sweep(log(poisObs), 1, Ez[,i]), FUN ="*")
-                qMat[,i] <- exp(qMat[,i] - logsumexp(qMat[,i]))
-                Ez[,i] <- rowSuma(sweep(poisObs,2,qMat[,i], FUN="*"))
+                qMat <- sweep(poisObs, 1, Ez[,i], FUN ="*")
+                q[,i] <- colSums(qMat)
+                q[,i] <- exp(q[,i] - logsumexp(q[,i]))
+                lambda[i] <- 1 / (1 + sum(exp(qMat) * obsDist) / sum(exp(qMat)))
+                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
+                for(k in 1:hostNum){
+                    poisObs[,k] <- poisP[obsDist[,k]+1]
+                }
+                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
+                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
             }
         }
-        for(i in 1:hostNum){
-            hostClusters[i,] <- colSums(sweep(Ez, 1,  (hostMat[,1] == i), FUN = "*"))
-        }
-        hostClusters <- sweep(hostClusters, 2, colSums(hostClusters), FUN ="/")
-
-        ## E step:
-        Ez.old <- Ez
-        for(i in 1:M){
-            probi <- dpois(1:hostLvl,lambda = lambda[i])
-            obsP <- matrix(NA, n, hostNum)
-            for(k in 1:hostLvl){
-                obsP[obsDist == k] <- probi[k]
-            }
-            Ez[,i] <- obsP %*% t(hostClusters[,i]) * p[i]
-        }
-        logLike <- sum(log(rowSums(Ez)))
-        Ez <- sweep(Ez, 1, rowSums(Ez), "/")
+        Ez <- sweep(logEzHost, 2, log(p), FUN="+")
+        rowSumsEz <- apply(Ez, 1, logsumexp)
+        logLike <- sum(rowSumsEz)
+        Ez <- exp(sweep(Ez, 1, rowSumsEz, "-"))
         colSums.Ez <- colSums(Ez)
         p <- colSums.Ez / sum(colSums.Ez)
         if(any(is.na(Ez))){
             warning("NA is produce in the last iteration step. Convergence failed.")
-            return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike))
+            return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambda, q = q))
         }
         if(j == 1){
             convergence <- logLike
@@ -322,7 +321,7 @@ hostCluster <- function(obsHost, distMat, hostMat, M, initP, maxIter, method="po
         logLike.old <- logLike
     }
     list(#fitted = mCluster$fitted,
-         Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike)
+         Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambda, q = q)
 }
 
 
