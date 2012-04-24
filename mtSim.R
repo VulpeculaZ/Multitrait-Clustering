@@ -4,7 +4,6 @@ library(inline)
 library(RcppArmadillo)
 ## Cannot work in R2.14
 ## library(openNLP)
-library(nnls)
 
 tb <- read.tree(text = "((a,b,c),(d,e,f),(g,h));")
 tb <- reorderPruning(tb)
@@ -233,9 +232,52 @@ nCorrect(tc = tc, r=simResult)
 monotoneEM(convResult)
 
 initP <- randomPMat(pDiff = 0.05, 2, 10)
-aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.1, inLen = 0.3, sig = 0.1)
+aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.2, inLen = 0.3, sig = 0.1)
 
 initP <- matrix(c(rep(0.1,5), rep(0.9,10), rep(0.1,5)), 10,2)
 
-tempResult <- DistCluster(distMat = aDist, M=2, initP = initP, maxIter = 100, tol = 1e-4)
+set.seed(42)
+tempResult <- DistCluster(distMat = aDist, M=2, initP = initP, maxIter = 4, tol = 1e-4)
 
+## New likelihood for hosts!!!
+
+rObs <- function(x){
+    temp <- x[-length(x)] == x[length(x)]
+    if(sum(temp) > 1) temp[sample(which(temp) ,sum(temp)-1 )] <- FALSE
+    which(temp)
+}
+
+distMat <- matrix(c(0,1,2,2,
+                    1,0,2,2,
+                    2,2,0,1,
+                    2,2,1,0),
+                  4,4)
+
+set.seed(42)
+eObs <- c(sample(c(1,2), 6, replace = TRUE), sample(c(3,4),6,replace =TRUE))
+error <- rgeom(12, prob=0.6)
+error[error > 2] <- 2
+obs <- apply(cbind(distMat[eObs,], error), 1, FUN = rObs)
+initP <- randomPMat(pDiff = 0.05, 2, 12)
+initQ <- randomPMat(pDiff = 0.05, 2, 4)
+hostCluster(obs, distMat, initP, maxIter = 200)
+
+## Test the new host likelihood with sequences.
+distMat <- matrix(c(0,1,2,2,
+                    1,0,2,2,
+                    2,2,0,1,
+                    2,2,1,0),
+                  4,4)
+
+set.seed(42)
+eObsHost <- c(sample(c(1,2), 6, replace = TRUE), sample(c(3,4),6,replace =TRUE))
+errorHost <- rgeom(12, prob=0.6)
+errorHost[errorHost > 2] <- 2
+obsHost <- apply(cbind(distMat[eObsHost,], errorHost), 1, FUN = rObs)
+obsSeq <- simClSeq(2, 12, group = c(6,6), outLen = 0.3, inLen = 0.1, l=200)
+initP <- randomPMat(pDiff = 0.05, 2, 12)
+
+mtCluster(obsSeq, P, obsHost=obsHost, distMat=distMat, M=2, initP = initP)
+
+
+##

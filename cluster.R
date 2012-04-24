@@ -2,22 +2,24 @@
 ##' Cluster observations with multiple traits
 ##' <details>
 ##' @title Multi-Traits Cluster
-##' @param seqData Sequence Data
-##' @param P Permutation probability matrix
-##' @param bf Base Frequency
-##' @param distMat Distance Matrix
-##' @param M Number of Clusters
-##' @param initP Initial Probability
-##' @param maxIter Maximum number of iterations
+##' @param seqData Sequence Data.
+##' @param P Permutation probability matrix.
+##' @param bf Base Frequency.
+##' @param obsHost The vector of hosts for the observations.
+##' @param distMat Distance Matrix.
+##' @param M Number of Clusters.
+##' @param initP Initial Probability.
+##' @param maxIter Maximum number of iterations.
 ##' @param tol Tolerance
 ##' @param method Which method to use? "rlog" or "cpp"
 ##' @param sparse Use sparse matrix for distance matrix clades?
-##' @param tol Tolerance,
+##' @param model The probabilistic model for the hosts.
 ##' @return A list. $Ez is the fitted value for clustering probability.
 ##' @author Ziqian Zhou
-mtCluster <- function(seqData, P, bf=c(0.25,0.25,0.25,0.25),  obsHost, distMat, M, initP, maxIter=100, tol=1e-4, method = "cpp", sparse = FALSE, model="geom"){
+mtCluster <- function(seqData, P, obsHost, distMat, M, initP,  bf=c(0.25,0.25,0.25,0.25), maxIter=100, tol=1e-4, method = "cpp", sparse = FALSE, model="geom", VC=NULL){
     M <- dim(initP)[2]
-    Ez <- initP
+    n <- dim(initP)[1]
+    logEzHost <- Ez <- initP
     logLike.old <- NULL
     p <- colSums(initP) / n
     ## for sequence
@@ -28,7 +30,7 @@ mtCluster <- function(seqData, P, bf=c(0.25,0.25,0.25,0.25),  obsHost, distMat, 
     P <- as.matrix(P)
     ## for hosts
     hostLvl <- max(distMat)
-    hostNum <- max(obsHost)
+    hostNum <- dim(distMat)[1]
     q <- matrix(, hostNum, M)
     hostClusters <- matrix(NA, hostNum, M)
     obsDist <- distMat[obsHost,]
@@ -63,9 +65,9 @@ mtCluster <- function(seqData, P, bf=c(0.25,0.25,0.25,0.25),  obsHost, distMat, 
         }
 
         logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
-        logRowSumsEz <- apply(Ez, 1, logsumexp)
+        logRowSumsEz <- apply(logEz, 1, logsumexp)
         logLike <- sum(logRowSumsEz)
-        Ez <- exp(sweep(Ez, 1, logRowSumsEz, "-"))
+        Ez <- exp(sweep(logEz, 1, logRowSumsEz, "-"))
         colSums.Ez <- colSums(Ez)
         p <- colSums.Ez / sum(colSums.Ez)
         if(any(is.na(Ez))){
@@ -89,8 +91,26 @@ mtCluster <- function(seqData, P, bf=c(0.25,0.25,0.25,0.25),  obsHost, distMat, 
         }
         logLike.old <- logLike
     }
-    list(#fitted = mCluster$fitted,
-         Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q)
+    if(!is.null(VC)){
+        if(model == "geom"){
+            for(i in 1:M){
+                poisObs <- matrix(,n, VC$hostNum)
+                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
+                for(k in 1:hostNum){
+                    poisObs[,k] <- poisP[obsDist[,k]+1]
+                }
+                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
+                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
+            }
+        }
+        logec <- vcRcpp(seqData, vcData, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+        logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
+        logRowSumsEz <- apply(logEz, 1, logsumexp)
+        logLikeCV <- sum(logRowSumsEz)
+        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, logLikeCV=logLikeCV))
+    }
+
+    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q)
 }
 
 

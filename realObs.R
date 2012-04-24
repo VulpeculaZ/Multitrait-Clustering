@@ -24,7 +24,7 @@ library(openNLP)
 hostDf <- read.csv(file = "rodent taxonomy.csv", sep =";")
 ## substr(hostDf$Species, regexpr(' ', hostDf$Species)+1, stop=nchar(as.character(hostDf$Species)))
 hostDf$Species <- sapply(X = hostDf$Species, FUN = tokenize)[2,]
-
+hostDf <- subset(hostDf,select = c(Species, Genus, Subfamily., Family, Suborder))
 ## Change the name to only species name
 workingDf$Species <- substr(workingDf$Species, regexpr('[\\.[:space:]]+', workingDf$Species) + 1, stop=nchar(workingDf$Species))
 
@@ -37,7 +37,7 @@ finalDf <- workingDf[!is.element(workingDf$Species, excluded),]
 
 ## Calculate distance matrix
 hostDistMat <- hostDist(hostDf, finalDf)
-
+save(hostDistMat, file = "host.RData")
 
 ##################################################
 ## Alignment
@@ -79,7 +79,9 @@ library(RcppArmadillo)
 library(nnls)
 
 load("obs_data.RData")
-postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/likelihood.cpp"), collapse = "\n" ))
+load("host.RData")
+postRcpp <- cxxfunction(signature(data ="list", vcData="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/vclikelihood.cpp"), collapse = "\n" ))
+vcRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/likelihood.cpp"), collapse = "\n" ))
 
 randomPMat <- function(percentDiff, m, n){
     p <- runif(m*n, (1-percentDiff)/n, (1+percentDiff)/n)
@@ -90,7 +92,7 @@ initDataP <- randomPMat(0.1, 6, 267)
 
 debug(mtCluster)
 
-mtDataResult <- mtCluster(finalPhy, P = P, distMat = hostDistMat, M = 6, initP=initDataP, maxIter = 9, tol = 1e-10)
+mtDataResult <- mtCluster(finalPhy, P = P, obsHost = hostDistMat$obsHost, distMat=hostDistMat$distMat, M = 6, initP=initDataP, maxIter = 100, tol = 1e-10)
 Ez <- mtDataResult$Ez
 maxEz <- apply(Ez, 1, function(x) which(x==max(x)))
 

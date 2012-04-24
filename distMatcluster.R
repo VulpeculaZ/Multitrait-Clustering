@@ -130,28 +130,32 @@ combp <- function(X, pMat){
 hostDist <- function(host, obs){
     uniHost <- host$Species
     uniMat <- matrix(,length(uniHost),length(uniHost))
-    maxDist <- (dim(hostDf)[2]+1) / 2
+    maxDist <- dim(hostDf)[2]
+    hostObs <- obs$Species
+    hostObs[hostObs == uniHost[1]] <- 1
     for(i in 2:length(uniHost)){
+        hostObs[hostObs == uniHost[i]] <- i
         for(j in 1:(i-1)){
             ientry <- host[i,]
             jentry <- host[j,]
             if(sum(ientry == jentry) == 0) uniMat[i,j] <- maxDist
-            else uniMat[i,j] <- min(which(host[i,] == hostDf[j,])) / 2
+            else uniMat[i,j] <- min(which(host[i,] == hostDf[j,])) - 1
         }
     }
     uniMat[upper.tri(uniMat)] <-  t(uniMat)[upper.tri(uniMat)]
     diag(uniMat) <- 0
-    distMat <- matrix(, dim(obs)[1], dim(obs)[1])
-    for(i in 2:dim(obs)[1]){
-        for(j in 1:(i-1)){
-            iindex <- which(uniHost == obs$Species[i])
-            jindex <- which(uniHost == obs$Species[j])
-            distMat[i,j] <- uniMat[iindex, jindex]
-        }
-    }
-    distMat[upper.tri(distMat)] <-  t(distMat)[upper.tri(distMat)]
-    diag(distMat) <- 0
-    distMat
+    list(obsHost = as.integer(hostObs), distMat=uniMat)
+    ## distMat <- matrix(, dim(obs)[1], dim(obs)[1])
+    ## for(i in 2:dim(obs)[1]){
+    ##     for(j in 1:(i-1)){
+    ##         iindex <- which(uniHost == obs$Species[i])
+    ##         jindex <- which(uniHost == obs$Species[j])
+    ##         distMat[i,j] <- uniMat[iindex, jindex]
+    ##     }
+    ## }
+    ## distMat[upper.tri(distMat)] <-  t(distMat)[upper.tri(distMat)]
+    ## diag(distMat) <- 0
+    ## distMat
 }
 
 

@@ -193,7 +193,7 @@ library(RcppArmadillo)
 library(nnls)
 
 
-postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines( "likelihood.cpp"), collapse = "\n" ))
+postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines( "Source/likelihood.cpp"), collapse = "\n" ))
 
 
 
