@@ -1,3 +1,8 @@
+postRcpp <- cxxfunction(signature(data ="list",  P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/likelihood.cpp"), collapse = "\n" ))
+
+cvRcpp <- cxxfunction(signature(data ="list", cvData="list",P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/cvlikelihood.cpp"), collapse = "\n" ))
+
+
 ##' <description>
 ##' Cluster observations with multiple traits
 ##' <details>
@@ -16,7 +21,7 @@
 ##' @param model The probabilistic model for the hosts.
 ##' @return A list. $Ez is the fitted value for clustering probability.
 ##' @author Ziqian Zhou
-mtCluster <- function(seqData, P, obsHost, distMat, M, initP,  bf=c(0.25,0.25,0.25,0.25), maxIter=100, tol=1e-4, method = "cpp", sparse = FALSE, model="geom", VC=NULL){
+mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.25), maxIter=200, tol=1e-4, method = "cpp", sparse = FALSE, model="geom", CV=NULL){
     M <- dim(initP)[2]
     n <- dim(initP)[1]
     logEzHost <- Ez <- initP
@@ -91,19 +96,22 @@ mtCluster <- function(seqData, P, obsHost, distMat, M, initP,  bf=c(0.25,0.25,0.
         }
         logLike.old <- logLike
     }
-    if(!is.null(VC)){
+    if(!is.null(CV)){
+        n <- length(CV$obsHost)
+        logEzHost <- matrix(,n,M)
+        cvDist <- distMat[CV$obsHost,]
         if(model == "geom"){
             for(i in 1:M){
-                poisObs <- matrix(,n, VC$hostNum)
+                poisObs <- matrix(,n, hostNum)
                 poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
                 for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
+                    poisObs[,k] <- poisP[cvDist[,k]+1]
                 }
                 qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
                 logEzHost[,i] <- apply(qMat, 1 , logsumexp)
             }
         }
-        logec <- vcRcpp(seqData, vcData, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+        logec <- cvRcpp(seqData, cvData=CV$seq, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
         logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
         logRowSumsEz <- apply(logEz, 1, logsumexp)
         logLikeCV <- sum(logRowSumsEz)
@@ -113,6 +121,36 @@ mtCluster <- function(seqData, P, obsHost, distMat, M, initP,  bf=c(0.25,0.25,0.
     list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q)
 }
 
+##' <description>
+##' A function for doing cross-validation to determine the number of clusters.
+##' <details>
+##' @title Cross-validation for clustering.
+##' @param dataList Data is a list to be passed to clustering function.
+##' @param n Number of observations.
+##' @param maxCluster The maximum number of clusters. The cross-validation will try
+##' from 1 to maxCluster number of clusters.
+##' @param mCV The number of Monte Carlo drops for CV.
+##' @param beta The ratio of learning samples.
+##' @return A vector of mean log-likelihood for different number of clusters.
+##' @author Ziqian Zhou
+cvCluster <- function(dataList, n, maxCluster, mCV, beta){
+    nCV <- ceiling(n * beta)
+    logLikeCV <- matrix(0, mCV, length(maxCluster))
+    for(i in 1:mCV){
+        trSample <- sample(1:n, nCV)
+        trSeq <- dataList$obsSeq[trSample]
+        cvSeq <- dataList$obsSeq[-trSample]
+        attributes(trSeq)$contrast <- attributes(cvSeq)$contrast <- attributes(dataList$obsSeq)$contrast
+        attributes(trSeq)$nc <- attributes(cvSeq)$nc <- attributes(dataList$obsSeq)$nc
+        cvData <- list(obsHost=dataList$obsHost[-trSample], seq=cvSeq)
+        for(j in maxCluster){
+            initP <- randomPMat(0.05, j, nCV)
+            templl <- mtCluster(trSeq, dataList$P, dataList$obsHost[trSample], distMat = dataList$distMat , initP = initP, CV=cvData)
+            logLikeCV[i,which(j == maxCluster)] <- templl$logLikeCV
+        }
+    }
+    logLikeCV <- logLikeCV / mCV
+}
 
 ##' <description>
 ##' Cluster observations with DNA sequences
