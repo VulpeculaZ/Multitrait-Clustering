@@ -40,6 +40,11 @@ mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,
     hostClusters <- matrix(NA, hostNum, M)
     obsDist <- distMat[obsHost,]
     lambda <- rep(0.5, M)
+    distDNA <- matrix(,n,n)
+    for(i in 1:n){
+        distDNA[,i] <- sapply(finalPhy, function(x) nrs - sum(x==finalPhy[[i]]))
+    }
+    distDNA <- distDNA / nrs
     for(j in 1:maxIter){
         ## host:
         if(model == "geom"){
@@ -133,7 +138,7 @@ mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,
 ##' @param beta The ratio of learning samples.
 ##' @return A vector of mean log-likelihood for different number of clusters.
 ##' @author Ziqian Zhou
-cvCluster <- function(dataList, n, maxCluster, mCV, beta){
+cvCluster <- function(dataList, n, maxCluster, mCV, beta, initPList){
     nCV <- ceiling(n * beta)
     logLikeCV <- matrix(0, mCV, length(maxCluster))
     for(i in 1:mCV){
@@ -144,7 +149,8 @@ cvCluster <- function(dataList, n, maxCluster, mCV, beta){
         attributes(trSeq)$nc <- attributes(cvSeq)$nc <- attributes(dataList$obsSeq)$nc
         cvData <- list(obsHost=dataList$obsHost[-trSample], seq=cvSeq)
         for(j in maxCluster){
-            initP <- randomPMat(0.05, j, nCV)
+            initP <- initPList[[j]][trSample,]
+            if(j == 1) initP <- matrix(1, length(trSample),1)
             templl <- mtCluster(trSeq, dataList$P, dataList$obsHost[trSample], distMat = dataList$distMat , initP = initP, CV=cvData)
             logLikeCV[i,which(j == maxCluster)] <- templl$logLikeCV
         }

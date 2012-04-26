@@ -43,36 +43,39 @@ save(hostDistMat, file = "host.RData")
 ## Alignment
 ##################################################
 ## Prepare for alignment
-finalMat <- substring(finalDf$Seq[[1]], seq(1,nchar(finalDf$Seq[[1]])), seq(1,nchar(finalDf$Seq[[1]])))
-for(i in 2:length(finalDf$Seq)){
-    x <- finalDf$Seq[i]
-    xDNAbin <-substring(x, seq(1,nchar(x)),seq(1,nchar(finalDf$Seq[[i]])))
-    finalMat <- rbind(finalMat, xDNAbin)
-}
-rownames(finalMat) <- finalDf$Isolate
-finalDNAbin <- as.DNAbin(finalMat, fill.with.gaps = TRUE)
-
+library(phangorn)
 
 finalList <- list()
 for(i in 1:length(finalDf$Seq)){
-    finalList[[i]] <- substring(finalDf$Seq[[i]], seq(1,nchar(finalDf$Seq[[i]])), seq(1,nchar(finalDf$Seq[[i]])))
+    x <- finalDf$Seq[i]
+    xDNAbin <-substring(x, seq(1,nchar(x)),seq(1,nchar(x)))
+    finalList[[i]] <- xDNAbin
 }
+
 names(finalList) <- finalDf$Isolate
 finalDNAbin <- as.DNAbin(finalList, fill.with.gaps = TRUE)
+
 
 ## Align sequences data
 finalAlign <- clustal(finalDNAbin)
 image.DNAbin(finalAlign)
 finalPhy <- as.phyDat(finalAlign)
+dm <- dist.dna(finalDNAbin)
+
 
 ## save
-save(finalPhy, hostDistMat, file = "obs_data.RData")
+save(finalPhy, file = "align_data.RData")
+unorderPhy <- finalPhy
+for(i in 1:length(unorderPhy)){
+    j <- which(names(unorderPhy)[i] == names(finalList))
+    finalPhy[[j]] <- unorderPhy[[i]]
+    names(finalPhy)[j] <- names(unorderPhy)[i]
+}
 
 ##################################################
 ## Clustering
 ##################################################
 
-library(phangorn)
 ## library(abind)
 library(inline)
 library(RcppArmadillo)
@@ -112,4 +115,57 @@ for(i in 1:100){
     cvSimObs <- cvSimObs + (cvllobs[[i]] == max(cvllobs[[i]]))
 }
 
-## the lowest cv likelihood is at 15th clusters
+
+## run script.R
+## after running script.R
+load("result.RData")
+
+apply(cvllobs, 2, sd)
+apply(cvllobs, 2, mean)
+
+result[[20]]$p
+
+identification <- idSize <- list()
+for(i in 1:7){
+    identification[[i]] <- max.col(result[[i]]$Ez)
+    idSize[[i]] <- table(identification[[i]])
+}
+
+idSize[[7]]
+
+g1 <- which(identification[[20]] == 20) # 62
+g4 <- which(identification[[20]] == 15) # 56
+g6 <- which(identification[[20]] == 3) # 35 20[3] + 20[15] == 9[3]
+g2 <- which(identification[[20]] == 18) # 31 == to 15[8] + 15[13] == 3[1]
+g3 <- which(identification[[15]] == 4) # 14 == to 20[14]+[13]
+g5 <- which(identification[[20]] == 10) # 38
+g7 <-  which(identification[[15]] == 3) # unassigned: [[20]][6](11) [12](9) [17](11) == [[15]][3](31)
+
+## g4+g6 <- 8[7] 91
+## g5+g7 == 8[8] 69
+
+nrP <- function(group,n){
+    M <- length(group)
+    PMat <- matrix(, n, M)
+    TC <- 1.1/ M
+    WC <- (1 - TC) / M
+    for(i in 1:M){
+        PMat[group[[i]],i] <- TC
+        PMat[-group[[i]],] <- WC
+    }
+    PMat
+}
+
+glist5 <- list(g1,g2,g3,c(g4,g6), c(g5,g7))
+glist6 <- list(g1,g2,g3,g4,g6, c(g5,g7))
+glist7 <- list(g1,g2,g3,g4,g6, g5,g7)
+
+set.seed(42)
+initP <- list()
+initP[[1]] <- matrix(1, 267, 1)
+initP[[2]] <- randomPMat(0.01, 2, 267)
+initP[[3]]<- randomPMat(0.01, 3, 267)
+initP[[4]]<- randomPMat(0.01, 4, 267)
+initP[[5]] <- nrP(glist5,267)
+initP[[6]] <- nrP(glist6,267)
+initP[[7]] <- nrP(glist7,267)
