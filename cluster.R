@@ -1,6 +1,6 @@
-postRcpp <- cxxfunction(signature(data ="list",  P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/likelihood.cpp"), collapse = "\n" ))
+postRcpp <- cxxfunction(signature(data ="list",  PList="list", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/likelihood.cpp"), collapse = "\n" ))
 
-cvRcpp <- cxxfunction(signature(data ="list", cvData="list",P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/cvlikelihood.cpp"), collapse = "\n" ))
+cvRcpp <- cxxfunction(signature(data ="list", cvData="list",PList="list", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/cvlikelihood.cpp"), collapse = "\n" ))
 
 
 ##' <description>
@@ -21,7 +21,7 @@ cvRcpp <- cxxfunction(signature(data ="list", cvData="list",P="matrix", contrast
 ##' @param model The probabilistic model for the hosts.
 ##' @return A list. $Ez is the fitted value for clustering probability.
 ##' @author Ziqian Zhou
-mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.25), maxIter=200, tol=1e-4, method = "cpp", sparse = FALSE, model="geom", CV=NULL){
+mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.25), maxIter=200, tol=1e-4, method = "cpp", sparse = FALSE, model="geom", CV=NULL){
     M <- dim(initP)[2]
     n <- dim(initP)[1]
     logEzHost <- Ez <- initP
@@ -32,7 +32,7 @@ mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,
     ncs <- as.integer(attr(seqData,"nc"))
     contrast <- attr(seqData, "contrast")
     ncos <- dim(contrast)[1]
-    P <- as.matrix(P)
+    P <- list()
     ## for hosts
     hostLvl <- max(distMat)
     hostNum <- dim(distMat)[1]
@@ -42,13 +42,15 @@ mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,
     lambda <- rep(0.5, M)
     distDNA <- matrix(,n,n)
     for(i in 1:n){
-        distDNA[,i] <- sapply(finalPhy, function(x) nrs - sum(x==finalPhy[[i]]))
+        distDNA[,i] <- sapply(seqData, function(x) nrs - sum(x==seqData[[i]]))
     }
     distDNA <- distDNA / nrs
     for(j in 1:maxIter){
         ## host:
         if(model == "geom"){
             for(i in 1:M){
+                pDNA <- sum((distDNA * outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / sum((outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / 3
+                P[[i]] <- diag(1 - 4 * pDNA, ncs) + pDNA
                 poisObs <- matrix(,n, hostNum)
                 poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
                 for(k in 1:hostNum){
@@ -68,10 +70,10 @@ mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,
         }
         ## sequence:
         if(method=="rlog"){
-            logec <- logPostR(seqData, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+            logec <- logPostR(seqData, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
         }
         if(method=="cpp"){
-            logec <- postRcpp(seqData, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+            logec <- postRcpp(seqData, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
         }
 
         logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
@@ -82,7 +84,7 @@ mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,
         p <- colSums.Ez / sum(colSums.Ez)
         if(any(is.na(Ez))){
             warning("NA is produce in the last iteration step. Convergence failed.")
-            return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambda, q = q))
+            return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambda, q = q, P))
         }
         if(j == 1) {
             convergence <- logLike
@@ -116,14 +118,14 @@ mtCluster <- function(seqData, P, obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,
                 logEzHost[,i] <- apply(qMat, 1 , logsumexp)
             }
         }
-        logec <- cvRcpp(seqData, cvData=CV$seq, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+        logec <- cvRcpp(seqData, cvData=CV$seq, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
         logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
         logRowSumsEz <- apply(logEz, 1, logsumexp)
         logLikeCV <- sum(logRowSumsEz)
-        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, logLikeCV=logLikeCV))
+        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, logLikeCV=logLikeCV), P=P)
     }
 
-    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q)
+    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, P=P)
 }
 
 ##' <description>
