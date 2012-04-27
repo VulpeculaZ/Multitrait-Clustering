@@ -51,7 +51,7 @@ mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.
             for(i in 1:M){
                 pDNA <- sum((distDNA * outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / sum((outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / 3
                 P[[i]] <- diag(1 - 4 * pDNA, ncs) + pDNA
-                poisObs <- matrix(,n, hostNum)
+                poisObs <- matrix(, n, hostNum)
                 poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
                 for(k in 1:hostNum){
                     poisObs[,k] <- poisP[obsDist[,k]+1]
@@ -122,7 +122,7 @@ mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.
         logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
         logRowSumsEz <- apply(logEz, 1, logsumexp)
         logLikeCV <- sum(logRowSumsEz)
-        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, logLikeCV=logLikeCV), P=P)
+        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, logLikeCV=logLikeCV, P=P))
     }
 
     list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, P=P)
@@ -153,8 +153,8 @@ cvCluster <- function(dataList, n, maxCluster, mCV, beta, initPList){
         for(j in maxCluster){
             initP <- initPList[[j]][trSample,]
             if(j == 1) initP <- matrix(1, length(trSample),1)
-            templl <- mtCluster(trSeq, dataList$P, dataList$obsHost[trSample], distMat = dataList$distMat , initP = initP, CV=cvData)
-            logLikeCV[i,which(j == maxCluster)] <- templl$logLikeCV
+            templl <- mtCluster(trSeq, dataList$obsHost[trSample], distMat = dataList$distMat , initP = initP, CV=cvData)
+            try(logLikeCV[i,which(j == maxCluster)] <- templl$logLikeCV)
         }
     }
     logLikeCV <- logLikeCV / mCV

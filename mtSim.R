@@ -135,7 +135,7 @@ initP <- randomPMat(pDiff = 0.05, 2, 12)
 ## Simulation for multiple trait:
 ## One simple example:
 obsSeq <- simClSeq(2, 12, group = c(6,6), outLen = 0.3, inLen = 0.1, l=200)
-mtCluster(obsSeq, P, obsHost=obsHost, distMat=distMat, M=2, initP = initP)
+mtCluster(obsSeq, obsHost=obsHost, distMat=distMat, initP = initP)
 ##
 
 
