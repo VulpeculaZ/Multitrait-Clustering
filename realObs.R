@@ -100,8 +100,12 @@ mtDataResult <- mtCluster(finalPhy, P = P, obsHost = hostDistMat$obsHost, distMa
 Ez <- mtDataResult$Ez
 maxEz <- apply(Ez, 1, function(x) which(x==max(x)))
 
+hostInitP <- matrix(c(rep(0.9,5),rep(0.1, 262), rep(0.1,5), rep(0.9, 262)),267,2)
+hostResult <- hostCluster(obsHost = hostDistMat$obsHost, distMat=hostDistMat$distMat, initP = randomPMat(0.1, 2, 267), model= "normal")
+
 save.image()
 cvDataListobs <- list(obsSeq=finalPhy, P=P, obsHost=hostDistMat$obsHost, distMat = hostDistMat$distMat)
+
 
 ## 2: 8:15
 
@@ -169,3 +173,109 @@ initP[[4]]<- randomPMat(0.01, 4, 267)
 initP[[5]] <- nrP(glist5,267)
 initP[[6]] <- nrP(glist6,267)
 initP[[7]] <- nrP(glist7,267)
+
+load("result_ct.RData")
+
+
+## Comparing with single trait
+idHostR <- idSizeHR <- idDNA <- idHost<- idSizeDNA <- idSizeHost<- list()
+for(i in 1:7){
+    idDNA[[i]] <- max.col(resultD[[i]]$Ez)
+    idHostR[[i]] <-  max.col(resultHR[[i]]$Ez)
+    idHost[[i]] <- max.col(resultH[[i]]$Ez)
+    idSizeDNA[[i]] <- table(idDNA[[i]])
+    idSizeHost[[i]] <- table(idHost[[i]])
+    idSizeHR[[i]] <- table(idHost[[i]])
+}
+
+## Use normal likelihood for distance between hosts.
+load("resultN.RData")
+
+idN <- idHN <- idRN <- idHRN<- idSizeN <- idSizeHN <- idSizeRN <- idSizeHRN<- list()
+## HN and HRN do not cluster?
+for(i in 1:7){
+    idN[[i]] <- max.col(resultN[[i]]$Ez)
+    idHN[[i]] <-  max.col(resultHN[[i]]$Ez)
+    idRN[[i]] <- max.col(resultRN[[i]]$Ez)
+    idHRN[[i]] <- max.col(resultHRN[[i]]$Ez)
+    idSizeN[[i]] <- table(idN[[i]])
+    idSizeHN[[i]] <- table(idHN[[i]])
+    idSizeRN[[i]] <- table(idRN[[i]])
+    idSizeHRN[[i]] <- table(idHRN[[i]])
+}
+
+apply(cvllobsN, 2, mean)
+apply(cvllobsRN, 2, mean)
+
+## table choosing the number of clusters:
+cvTable <- matrix(, 3, 7)
+colnames(cvTable) <- as.character(1:7)
+rownames(cvTable) <- c("log likelihood","cv log likelihood","BIC")
+for( i in 1:7){
+    cvTable[1,i] <- resultRN[[i]]$logLike
+    cvTable[2,i] <- mean(cvllobsN[,i])
+    cvTable[3,i] <- 2 * (log(267) * (267 + 34 +2) * i - resultRN[[i]]$logLike)
+}
+length(cvllobsCTN)
+xtable(cvTable, digits=0)
+
+idSizeDNA[[4]]
+idSize[[4]]
+
+## Host distribution:
+host <- list()
+for(i in 1:4){
+    host[[i]] <- hostDistMat$obsHost[which(identification[[4]]==i)]
+}
+## 18 6 isolates in 2,3,4
+## 23 in 1(3), 2, 3(mostly), 4
+## 22 in 4(5),1(15) 1(1)
+## 17 in 2(mostly), 1(3)
+## 25 in 1(32), 2(3)
+## 35
+## 20 in 2 adn 3
+
+## Changes
+idSize[[4]]
+idSizeDNA[[4]]
+hostDNA <- list()
+for(i in 1:4){
+    hostDNA[[i]] <- hostDistMat$obsHost[which(idDNA[[4]]==i)]
+}
+
+sort(hostDNA[[4]])
+sort(host[[2]])
+
+sort(hostDNA[[2]])
+sort(host[[1]])
+##  29 split into 29(3) and 29(15)
+
+
+## pie chart:
+slices <- lbls <- colorPie <- list()
+hostNames <- paste(hostDf[,2], hostDf[,1])
+for(i in 1:4){
+    slices[[i]] <- 0
+    lbls[[i]] <- 0
+    unisp <- unique(host[[i]])
+    colorPie[[i]] <- unisp
+    for(j in 1:length(unisp)){
+        slices[[i]][j] <- sum(host[[i]] == unisp[j])
+        lbls[[i]][j] <- paste(hostNames[unisp[j]], "\n", slices[[i]][j], sep="")
+    }
+}
+
+pie(slices[[1]], lbls[[1]])
+pie(slices[[2]], lbls[[2]])
+
+a <- c(2:4,6:10)
+b <- unique(c(colorPie[[3]],colorPie[[4]]))
+for(i in 1:length(b)){
+    colorPie[[3]][which(colorPie[[3]] == b[i])] <- a[i]
+    colorPie[[4]][which(colorPie[[4]] == b[i])] <- a[i]
+}
+
+pie(slices[[3]], lbls[[3]], col=colorPie[[3]])
+pie(slices[[4]], lbls[[4]],col=colorPie[[4]])
+
+

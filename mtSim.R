@@ -68,7 +68,7 @@ convResult <- list()
 for(i in 1:100){
     initP <- randomPMat(pDiff = 0.05, 2, 10)
     aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.3, inLen = 0.1, l=200)
-    tempResult <- DNACluster(seqData = aSeq, P = P, M=2, initP = initP, maxIter = 100, tol = 1e-4)
+    tempResult <- DNACluster(seqData = aSeq, initP = initP, maxIter = 100, tol = 1e-4)
     simResult[[i]] <- tempResult$Ez;
     convResult[[i]] <- tempResult$convergence
 }
@@ -114,8 +114,7 @@ error <- rgeom(12, prob=0.6)
 error[error > 2] <- 2
 obs <- apply(cbind(distMat[eObs,], error), 1, FUN = rObs)
 initP <- randomPMat(pDiff = 0.05, 2, 12)
-initQ <- randomPMat(pDiff = 0.05, 2, 4)
-hostCluster(obs, distMat, initP, maxIter = 200)
+hostCluster(obs, distMat, initP, maxIter = 200, model="normal")
 
 ## Test the new host likelihood with sequences.
 distMat <- matrix(c(0,1,2,2,
@@ -130,7 +129,6 @@ errorHost <- rgeom(12, prob=0.6)
 errorHost[errorHost > 2] <- 2
 obsHost <- apply(cbind(distMat[eObsHost,], errorHost), 1, FUN = rObs)
 initP <- randomPMat(pDiff = 0.05, 2, 12)
-
 
 ## Simulation for multiple trait:
 ## One simple example:
@@ -189,3 +187,75 @@ for(i in 1:100){
     cvSim <- cvSim + (cvll[[i]] == max(cvll[[i]]))
 }
 
+##################################################
+## two moon
+##################################################
+library(spa)
+
+set.seed(100)
+twoMoons <- spa.sim(type="moon")
+plot(twoMoons$x1, twoMoons$x2)
+distMat <- sqrt(outer(twoMoons$x1, twoMoons$x1, FUN = "-") ^ 2 + outer(twoMoons$x2, twoMoons$x2, FUN = "-") ^ 2)
+
+
+twoC <- list()
+twoC$x1 <- c(rnorm(103), rnorm(103) + 3)
+twoC$x2 <- c(rnorm(103), rnorm(103) + 3)
+distMat2c <- sqrt(outer(twoC$x1, twoC$x1, FUN = "-") ^ 2 + outer(twoC$x2, twoC$x2, FUN = "-") ^ 2)
+plot(twoMoons$x1, twoMoons$x2)
+
+
+## initP <- matrix(c(rep(0.7,103), rep(0.3,206), rep(0.7,103)),206,2)
+initP <- randomPMat(pDiff = 0.1, 2, 206)
+mmTm2 <- mmEm(distMat, initP =initP, tol=1e-08, maxIter = 1)
+notCorrect <- as.logical(abs((mmTm$Ez < 0.5) [,1]  - c(rep(1,103), rep(0,103))))
+points(twoMoons$x1[notCorrectNormal], twoMoons$x2[notCorrectNormal], col = 2)
+notCorrectNormal <- as.logical(4* twoMoons$x1 -6 - twoMoons$x2 > 0)
+notCorrectNormal[104:206] <- FALSE
+
+##' ##' <description>
+##'
+##' <details>
+##' @title
+##' @param y1 Data
+##' @param y2 Data
+##' @param x1 Prediction
+##' @param x2 Prediction
+##' @param t
+##' @param theta
+##' @return
+##' @author Ziqian Zhou
+mmEmPred <- function(y1, y2, x1, x2, t, theta){
+    M <- dim(t)[2]
+    n <- dim(t)[1]
+    distXY <- sqrt(outer(x1, y1, FUN = "-") ^ 2 + outer(x2, y2, FUN = "-") ^ 2)
+    distYY <- sqrt(outer(y1, y1, FUN = "-") ^ 2 + outer(y2, y2, FUN = "-") ^ 2)
+    predP <- matrix(, nrow = length(x1), ncol=M)
+    dMat <- dnorm(x = distXY, mean =0, sd=theta)
+    pMat <- dnorm(x = distYY, mean = 0, sd = theta)
+
+    for(i in 1:M){
+        pMatt <- sweep(pMat, 2, t[,i], FUN = "^")
+        qi <- apply(pMatt,1, prod)
+        qi <- qi / sum(qi)
+        predP[,i] <- rowSums(sweep(dMat, 2, qi, FUN = "*"))
+    }
+    predP <- sweep(predP,1, rowSums(predP), "/")
+    predP
+}
+
+xPred <- list(x1 =c(2,4,3,3.08), x2 = c(2,-4,-2,1.345))
+
+x1Pred <-  seq(0,6,len = 200)
+x2Pred <- seq(-4,2,len = 200)
+xpredList <- list(x1 = rep(x1Pred, each=200) , x2 = rep(x2Pred, 200))
+dContour <- mmEmPred(twoMoons$x1, twoMoons$x2,xpredList$x1, xpredList$x2, mmTm$Ez, 0.5)
+mContour1 <- matrix(dContour[,1], 200,200)
+mContour2 <- matrix(dContour[,2], 200,200)
+
+mContour1 <- mContour1-0.99
+mContour1[mContour1<0] <-  0
+contour(mContour1)
+
+lines(x =c(1,2), y = c(-2,2))
+twoMoons$x1
