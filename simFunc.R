@@ -32,7 +32,7 @@ randomPMat <- function(pDiff, m, n){
 ##' @param returnTree Whether or not return the tree.
 ##' @return A group of n sequences of the class phyDat.
 ##' @author Ziqian Zhou
-simClSeq <- function(M, n, group, outLen, inLen, l = 500, returnTree = FALSE){
+simClSeq <- function(M, n, group, outLen, inLen, l = 500, returnSeq = TRUE, returnTree = FALSE, ancestral = FALSE){
     rTree <- list()
     rTree$edge <- matrix(, nrow =n+M, ncol =2)
     rTree$edge[1:n, 1] <- rep((n+2):(n+M+1), group)
@@ -50,11 +50,16 @@ simClSeq <- function(M, n, group, outLen, inLen, l = 500, returnTree = FALSE){
     rTree$tip.label <- as.character(1:n)
     attr(rTree, "class") = "phylo"
     attr(rTree, "order") = "pruningwise"
-    if(!isTRUE(returnTree)){
-        return(simSeq(rTree, l = l))
+    if(isTRUE(returnSeq)){
+        if(!isTRUE(returnTree)){
+            return(simSeq(rTree, l = l, ancestral = ancestral))
+        }
+        else{
+            return(list(seq=simSeq(rTree, l=l,  ancestral = ancestral), tree = rTree))
+        }
     }
     else{
-        return(list(seq=simSeq(rTree, l=l), tree = rTree))
+        return(rTree)
     }
 }
 
@@ -107,32 +112,67 @@ simDistMat <- function(M, n, group, outLen, inLen, sig){
 ##' @param p Cut off probabiltiy for classification. If p==0, use the cluster with highest probability as the classification result.
 ##' @return The ratio of correctly identified clusters.
 ##' @author Ziqian Zhou
-nCorrect <- function(tc, r, p=0){
-    nTips <- length(tc$tip.label)
-    inner <- (nTips+2):(nTips+tc$Nnode)
-    groups <- list()
-    ratioC <- 0
-    for(i in 1:length(inner)){
-        groups[[i]] <- sort(as.integer(tc$edge[which(tc$edge[,1] == inner[i]), 2]))
-    }
-    for(i in 1:length(r)){
-        idr <- list()
-        maxr <- apply(r[[i]], 1, function(x) which(x==max(x)))
-        for(j in 1:length(inner)){
-            idr[[j]] <- sort(as.integer(which(maxr == j)))
-            for(k in 1:length(inner)){
-                if(p==0) ratioC <- ratioC + identical(idr[[j]], groups[[k]])
-                else ratioC <- ratioC + as.integer(identical(idr[[j]], groups[[k]]) && min(r[[i]][idr[[j]],j]) > p)
+## nCorrect <- function(tc , r, p=0){
+##     nTips <- length(tc$tip.label)
+##     inner <- (nTips+2):(nTips+tc$Nnode)
+##     groups <- list()
+##     ratioC <- 0
+##     for(i in 1:length(inner)){
+##         groups[[i]] <- sort(as.integer(tc$edge[which(tc$edge[,1] == inner[i]), 2]))
+##     }
+##     for(i in 1:length(r)){
+##         idr <- list()
+##         maxr <- apply(r[[i]], 1, function(x) which(x==max(x)))
+##         for(j in 1:length(inner)){
+##             idr[[j]] <- sort(as.integer(which(maxr == j)))
+##             for(k in 1:length(inner)){
+##                 if(p==0) ratioC <- ratioC + identical(idr[[j]], groups[[k]])
+##                 else ratioC <- ratioC + as.integer(identical(idr[[j]], groups[[k]]) && min(r[[i]][idr[[j]],j]) > p)
+##             }
+##         }
+##     }
+##     return(ratioC / length(inner) / length(r))
+## }
+
+
+##' <description>
+##' Test the number of correctly identified clusters.
+##' <details>
+##' @title nCorrect
+##' @param tc The true tree.
+##' @param r A list of matrices of classification probabilities.
+##' @param p Cut off probabiltiy for classification. If p==0, use the cluster with highest probability as the classification result.
+##' @return The ratio of correctly identified clusters.
+##' @author Ziqian Zhou
+nCorrect <- function(grouping, r, p=0){
+    n <- length(r)
+    nr <- dim(r[[1]])[1]
+    ndiv <- 0
+    for(j in 1:length(r)){
+        rGrouping <- max.col(r[[j]])
+        tGrouping <- table(rGrouping)
+        cumsumGrouping <- cumsum(grouping)
+        for(i in 1:length(grouping)){
+            if(i == 1){
+                iNGroup <- max(table(rGrouping[1:cumsumGrouping[i]]))
+                iGroup <- which.max(table(rGrouping[1:cumsumGrouping[i]]))
+                ndiv <- ndiv + abs(iNGroup - grouping[i]) + abs(tGrouping[iGroup] - iNGroup)
+            }
+            else{
+                iNGroup <- max(table(rGrouping[cumsumGrouping[i-1]:cumsumGrouping[i]]))
+                iGroup <- which.max(table(rGrouping[cumsumGrouping[i-1]:cumsumGrouping[i]]))
+                ndiv <- ndiv + abs(iNGroup - grouping[i]) + abs(tGrouping[iGroup] - iNGroup)
             }
         }
     }
-    return(ratioC / length(inner) / length(r))
+    return(ndiv / length(grouping) / n / nr)
 }
+
 
 monotoneEM <- function(x){
     mono <- 0
     for(i in 1:length(x)){
-        if(any(x[[i]][-1] - x[[i]][-length(x[[i]])] < 0)){
+        if(any(x[[i]][-1] - x[[i]][-length(x[[i]])] < -.Machine$double.eps)){
             mono <- mono + 1
             print(i)
         }

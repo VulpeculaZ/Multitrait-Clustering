@@ -2,6 +2,9 @@ postRcpp <- cxxfunction(signature(data ="list",  PList="list", contrast="matrix"
 
 cvRcpp <- cxxfunction(signature(data ="list", cvData="list",PList="list", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines("./Source/cvlikelihood.cpp"), collapse = "\n" ))
 
+postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo",  body=paste( readLines("./Source/likelihood.cpp"), collapse = "\n"))
+
+
 mmEm <- function(x, den ="normal", initP, maxIter=200, tol=1e-4, CV=NULL){
     M <- dim(initP)[2]
     n <- dim(initP)[1]
@@ -25,7 +28,7 @@ mmEm <- function(x, den ="normal", initP, maxIter=200, tol=1e-4, CV=NULL){
                 pMatEz <- sweep(pMat, 2, Ez[,i], FUN = "^")
                 qi <- apply(pMatEz, 1, prod)
                 qi <- qi / sum(qi)
-                Ez[,i] <- colSums(sweep(pMat, 1, qi, FUN = "*"))
+                Ez[,i] <- qi * p[i]
             }
         }
         rowSumsEz <- rowSums(Ez)
@@ -102,7 +105,7 @@ mmEm <- function(x, den ="normal", initP, maxIter=200, tol=1e-4, CV=NULL){
 ##' @param model The probabilistic model for the hosts.
 ##' @return A list. $Ez is the fitted value for clustering probability.
 ##' @author Ziqian Zhou
-mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.25), maxIter=200, tol=1e-4, method = "cpp", sparse = FALSE, model="normal", CV=NULL){
+mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.25), maxIter=200, tol=1e-4, method = "cpp", sparse = FALSE, model="geom", CV=NULL){
     M <- dim(initP)[2]
     n <- dim(initP)[1]
     logEzHost <- Ez <- initP
@@ -114,72 +117,31 @@ mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.
     contrast <- attr(seqData, "contrast")
     ncos <- dim(contrast)[1]
     P <- list()
-    distDNA <- matrix(,n,n)
-    for(i in 1:n){
-        distDNA[,i] <- sapply(seqData, function(x) nrs - sum(x==seqData[[i]]))
-    }
-    distDNA <- distDNA / nrs
     ## for hosts
     hostLvl <- max(distMat)
     hostNum <- dim(distMat)[1]
-    q <- matrix(, hostNum, M)
     hostClusters <- matrix(NA, hostNum, M)
     obsDist <- distMat[obsHost,]
-    lambda <- rep(0.5, M)
-
     for(j in 1:maxIter){
         ## host:
         if(model == "geom"){
-            for(i in 1:M){
-                pDNA <- sum((distDNA * outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / sum((outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / 3
-                P[[i]] <- diag(1 - 4 * pDNA, ncs) + pDNA
-
-                poisObs <- matrix(, n, hostNum)
-                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 1, Ez[,i], FUN ="*")
-                q[,i] <- colSums(qMat)
-                q[,i] <- exp(q[,i] - logsumexp(q[,i]))
-                lambda[i] <- 1 / (1 + sum(exp(qMat) * obsDist) / sum(exp(qMat)))
-                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
-                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
-            }
-        }
-        if(model == "normal"){
-            for(i in 1:M){
-                pDNA <- sum((distDNA * outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / sum((outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / 3
-                P[[i]] <- diag(1 - 4 * pDNA, ncs) + pDNA
-
-                poisObs <- matrix(,n, hostNum)
-                poisP <- dnorm(0:hostLvl, mean =0, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 1, Ez[,i], FUN ="*")
-                q[,i] <- colSums(qMat)
-                q[,i] <- exp(q[,i] - logsumexp(q[,i]))
-                lambda[i] <- sqrt(sum((exp(qMat) * obsDist)^2) / hostNum / n)
-                if(lambda[i] < 0.1) lambda[i] <- 0.1
-                poisP <- dnorm(0:hostLvl, mean =0, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
-                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
-            }
+            hostResult <- EMhost(obsDist=obsDist, Ez = Ez, hostLvl = hostLvl)
+            logEzHost <- hostResult$ecps
+            lambdaHost <- hostResult$lambda
+            host <- hostResult$host
         }
         ## sequence:
         if(method=="rlog"){
-            logec <- logPostR(seqData, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+            emList <- EMseqR(seqData, contrast=contrast, nrs=nrs, ncs=ncs, ecps=Ez)
+            logec <- emList$ecps
+            y <- emList$y
+            theta <- emList$theta
         }
         if(method=="cpp"){
-            logec <- postRcpp(seqData, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+            emList <- emSeqRcpp(data=seqData, contrast=contrast, nrs=nrs, ncs =ncs, ncos=ncos, ecps=Ez, MachineEps=.Machine$double.eps)
+            logec <- emList$ecps
+            y <- emList$y
+            theta <- emList$theta
         }
 
         logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
@@ -190,9 +152,9 @@ mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.
         p <- colSums.Ez / sum(colSums.Ez)
         if(any(is.na(Ez))){
             warning("NA is produce in the last iteration step. Convergence failed.")
-            return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambda, q = q, P))
+            return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, theta = theta, P))
         }
-        if(j == 1) {
+        if(j == 1){
             convergence <- logLike
             Ez.old <- Ez
         }
@@ -215,34 +177,15 @@ mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.
         logEzHost <- matrix(,n,M)
         cvDist <- distMat[CV$obsHost,]
         if(model == "geom"){
-            for(i in 1:M){
-                poisObs <- matrix(,n, hostNum)
-                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[cvDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
-                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
-            }
+            logEzHost <- cvHost(cvDist = cvDist, lambda = lambdaHost, cvLvl = hostLvl, host= host)
         }
-        if(model == "normal"){
-            for(i in 1:M){
-                poisObs <- matrix(,n, hostNum)
-                poisP <- dnorm(0:hostLvl, mean =0, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[cvDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
-                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
-            }
-        }
-        logec <- cvRcpp(seqData, cvData=CV$seq, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+        logec <- seqCV(cvData=CV$seq,  contrast=contrast, nrs=nrs, ncs=ncs, ecps=Ez, y =y, theta= theta)
         logEz <- sweep(logec + logEzHost, 2, log(p), FUN="+")
         logRowSumsEz <- apply(logEz, 1, logsumexp)
         logLikeCV <- sum(logRowSumsEz)
-        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, logLikeCV=logLikeCV, P=P))
+        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,theta = theta, lambda = lambdaHost, logLikeCV=logLikeCV))
     }
-    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, P=P)
+    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambdaHost, theta = theta)
 }
 
 ##' <description>
@@ -257,10 +200,9 @@ mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.
 ##' @param beta The ratio of learning samples.
 ##' @return A vector of mean log-likelihood for different number of clusters.
 ##' @author Ziqian Zhou
-cvCluster <- function(dataList, n, maxCluster, mCV, beta, initPList, method="mt"){
+cvCluster <- function(dataList, n, maxCluster, mCV, beta, initPList){
     nCV <- ceiling(n * beta)
-    if(method == "mt") logLikeCV <- matrix(0, mCV, length(maxCluster))
-    if(method == "ct") DNACV <- hostCV <- matrix(0, mCV, length(maxCluster))
+    logLikeCV <- matrix(NA, mCV, maxCluster)
     for(i in 1:mCV){
         trSample <- sample(1:n, nCV)
         trSeq <- dataList$obsSeq[trSample]
@@ -268,23 +210,13 @@ cvCluster <- function(dataList, n, maxCluster, mCV, beta, initPList, method="mt"
         attributes(trSeq)$contrast <- attributes(cvSeq)$contrast <- attributes(dataList$obsSeq)$contrast
         attributes(trSeq)$nc <- attributes(cvSeq)$nc <- attributes(dataList$obsSeq)$nc
         cvData <- list(obsHost=dataList$obsHost[-trSample], seq=cvSeq)
-        for(j in maxCluster){
+        for(j in 1:maxCluster){
             initP <- initPList[[j]][trSample,]
             if(j == 1) initP <- matrix(1, length(trSample),1)
-            if(method == "mt"){
-                templl <- mtCluster(trSeq, dataList$obsHost[trSample], distMat = dataList$distMat , initP = initP, CV=cvData)
-                try(logLikeCV[i,which(j == maxCluster)] <- templl$logLikeCV)
-            }
-            if(method == "ct"){
-                tempDNA <- DNACluster(trSeq, initP = initP, CV=list(seq = cvData$seq))
-                tempHost <- hostCluster(dataList$obsHost[trSample], distMat = dataList$distMat , initP = initP, CV=list(obsHost = cvData$obsHost))
-                try(DNACV[i,which(j == maxCluster)] <- tempDNA$logLikeCV)
-                try(hostCV[i,which(j == maxCluster)] <- tempHost$logLikeCV)
-            }
+            templl <- mtCluster(trSeq, dataList$obsHost[trSample], distMat = dataList$distMat , initP = initP, CV=cvData)
+            try(logLikeCV[i,j] <- templl$logLikeCV)
         }
     }
-    if(method == "mt") logLikeCV <- logLikeCV
-    if(method == "ct") logLikeCV <- list(DNA = DNACV, host = hostCV)
     logLikeCV
 }
 
@@ -303,7 +235,7 @@ cvCluster <- function(dataList, n, maxCluster, mCV, beta, initPList, method="mt"
 ##' @param tol Tolerance,
 ##' @return A list. $Ez is the fitted value for clustering probability.
 ##' @author Ziqian Zhou
-DNACluster <- function(seqData, bf=c(0.25,0.25,0.25,0.25), initP, maxIter=200, tol=1e-4, method = "cpp", CV=NULL){
+DNACluster <- function(seqData, bf=c(0.25,0.25,0.25,0.25), initP, maxIter=200, tol=1e-4, method = "cpp", CV=NULL, P=NULL){
     M <- dim(initP)[2]
     n <- dim(initP)[1]
     Ez <- initP
@@ -312,25 +244,24 @@ DNACluster <- function(seqData, bf=c(0.25,0.25,0.25,0.25), initP, maxIter=200, t
     ncs <- as.integer(attr(seqData,"nc"))
     contrast <- attr(seqData, "contrast")
     ncos <- dim(contrast)[1]
-    P <- list()
+    ##P <- list()
     logLike.old <- NULL
     distDNA <- matrix(,n,n)
-    for(i in 1:n){
-        distDNA[,i] <- sapply(seqData, function(x) nrs - sum(x==seqData[[i]]))
-    }
-    distDNA <- distDNA / nrs
-
+    y <- NULL
+    theta <- NULL
     for(j in 1:maxIter){
-        for(i in 1:M){
-            pDNA <- sum((distDNA * outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / sum((outer(Ez[,i], Ez[,i]))[upper.tri(distDNA)]) / 3
-            P[[i]] <- diag(1 - 4 * pDNA, ncs) + pDNA
-        }
         ## E step:
-        if(method=="rlog"){
-            logec <- logPostR(seqData, P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+        if(method=="EMseq"){
+            emList <- EMseqR(seqData, contrast=contrast, nrs=nrs, ncs=ncs, ecps=Ez)
+            logec <- emList$ecps
+            y <- emList$y
+            theta <- emList$theta
         }
-        if(method=="cpp"){
-            logec <- postRcpp(seqData, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+        if(method =="cpp"){
+            emList <- emSeqRcpp(data=seqData, contrast=contrast, nrs=nrs, ncs =ncs, ncos=ncos, ecps=Ez, MachineEps=.Machine$double.eps)
+            logec <- emList$ecps
+            y <- emList$y
+            theta <- emList$theta
         }
         logEz <- sweep(logec, 2, log(p), FUN="+")
         logRowSumsEz <- apply(logEz, 1, logsumexp)
@@ -338,9 +269,12 @@ DNACluster <- function(seqData, bf=c(0.25,0.25,0.25,0.25), initP, maxIter=200, t
         Ez <- exp(sweep(logEz, 1, logRowSumsEz, "-"))
         colSums.Ez <- colSums(Ez)
         p <- colSums.Ez / sum(colSums.Ez)
-                if(any(is.na(Ez))){
-            warning("NA is produce in the last iteration step. Convergence failed.")
-            return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, P=P))
+        ## if(any(is.na(Ez))){
+        ##     warning("NA is produce in the last iteration step. Convergence failed.")
+        ##     return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, P=P, y=y))
+        ## }
+        if(any(is.na(Ez))){
+            Ez[which(is.na(Ez))] <- 0
         }
         if(j == 1) {
             convergence <- logLike
@@ -363,13 +297,14 @@ DNACluster <- function(seqData, bf=c(0.25,0.25,0.25,0.25), initP, maxIter=200, t
     if(!is.null(CV)){
         n <- length(CV$seq)
         logEzHost <- matrix(,n,M)
-        logec <- cvRcpp(seqData, cvData=CV$seq, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+        ## logec <- cvRcpp(seqData, cvData=CV$seq, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
+        logec <- seqCV(cvData=CV$seq,  contrast=contrast, nrs=nrs, ncs=ncs, ecps=Ez, y =y, theta= theta)
         logEz <- sweep(logec, 2, log(p), FUN="+")
         logRowSumsEz <- apply(logEz, 1, logsumexp)
         logLikeCV <- sum(logRowSumsEz)
-        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, logLikeCV=logLikeCV, P=P))
+        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, logLikeCV=logLikeCV))
     }
-    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, P=P)
+    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, P=P, y=y, theta = theta)
 }
 
 
@@ -472,56 +407,16 @@ hostCluster <- function(obsHost, distMat, initP, maxIter=200, model="normal", to
     p <- colSums(initP) / n
     hostLvl <- max(distMat)
     hostNum <- dim(distMat)[1]
-    q <- matrix(, hostNum, M)
+    ## q <- matrix(, hostNum, M)
     hostClusters <- matrix(NA, hostNum, M)
     obsDist <- distMat[obsHost,]
-    lambda <- rep(0.5, M)
 
     for(j in 1:maxIter){
         if(model == "geom"){
-            for(i in 1:M){
-                ## M step:
-                poisObs <- matrix(,n, hostNum)
-                ## lambda: M * hostNum matrix, with estimated lambda for poisson
-                ## lambda[i,] <- apply(wX, 2, sum) / p[i] / n
-                ## E step
-                ## poisP: matrix for lookup the pmf for cluster i.
-                ## A hostLvl * hostNum matrix
-                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 1, Ez[,i], FUN ="*")
-                q[,i] <- colSums(qMat)
-                q[,i] <- exp(q[,i] - logsumexp(q[,i]))
-                lambda[i] <- 1 / (1 + sum(exp(qMat) * obsDist) / sum(exp(qMat)))
-                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
-                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
-            }
-        }
-        if(model == "normal"){
-            for(i in 1:M){
-                poisObs <- matrix(,n, hostNum)
-                poisP <- dnorm(0:hostLvl, mean =0, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 1, Ez[,i], FUN ="*")
-                q[,i] <- colSums(qMat)
-                q[,i] <- exp(q[,i] - logsumexp(q[,i]))
-                lambda[i] <- sqrt(sum((exp(qMat) * obsDist)^2) / hostNum / n)
-                if(lambda[i] < 0.1) lambda[i] <- 0.1
-                poisP <- dnorm(0:hostLvl, mean =0, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[obsDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
-                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
-            }
+            hostResult <- EMhost(obsDist=obsDist, Ez = Ez, hostLvl = hostLvl)
+            logEzHost <- hostResult$ecps
+            lambdaHost <- hostResult$lambda
+            host <- hostResult$host
         }
         Ez <- sweep(logEzHost, 2, log(p), FUN="+")
         rowSumsEz <- apply(Ez, 1, logsumexp)
@@ -531,7 +426,7 @@ hostCluster <- function(obsHost, distMat, initP, maxIter=200, model="normal", to
         p <- colSums.Ez / sum(colSums.Ez)
         if(any(is.na(Ez))){
             warning("NA is produce in the last iteration step. Convergence failed.")
-            return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambda, q = q))
+            return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, lambdaHost = lambdaHost,  host = host))
         }
         if(j == 1){
             convergence <- logLike
@@ -556,15 +451,7 @@ hostCluster <- function(obsHost, distMat, initP, maxIter=200, model="normal", to
         logEzHost <- matrix(,n,M)
         cvDist <- distMat[CV$obsHost,]
         if(model == "geom"){
-            for(i in 1:M){
-                poisObs <- matrix(,n, hostNum)
-                poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
-                for(k in 1:hostNum){
-                    poisObs[,k] <- poisP[cvDist[,k]+1]
-                }
-                qMat <- sweep(poisObs, 2, log(q[,i]), FUN ="+")
-                logEzHost[,i] <- apply(qMat, 1 , logsumexp)
-            }
+            logEzHost <- cvHost(cvDist = cvDist, lambda = lambdaHost, cvLvl = hostLvl, host= host)
         }
         if(model == "normal"){
             for(i in 1:M){
@@ -580,9 +467,9 @@ hostCluster <- function(obsHost, distMat, initP, maxIter=200, model="normal", to
         logEz <- sweep(logEzHost, 2, log(p), FUN="+")
         logRowSumsEz <- apply(logEz, 1, logsumexp)
         logLikeCV <- sum(logRowSumsEz)
-        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambda, q = q, logLikeCV=logLikeCV))
+        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambdaHost, logLikeCV=logLikeCV, host = host))
     }
-    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambda, q = q)
+    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, lambda = lambdaHost, host = host)
 }
 
 
@@ -619,4 +506,49 @@ mcEz <- function(matlogf, p, MC = "MC", iter = NULL){
     Ez
 }
 
+
+EMhost <- function(obsDist, Ez, hostLvl){
+    M <- dim(Ez)[2]
+    lambda <- host <- NA
+    ecps <- matrix(0, dim(Ez)[1], dim(Ez)[2])
+    for(i in 1:M){
+        sumEzi <- sum(Ez[,i])
+        sumEzki <- colSums(sweep(obsDist, 1, Ez[,i], FUN ="*"))
+        lambdai <- sumEzi / (sumEzi + sumEzki)
+        logLikei <- sumEzki * log(1 - lambdai) + sumEzi * log(lambdai)
+        host[i] <- which.is.max(logLikei)
+        lambda[i] <- lambdai[host[i]]
+
+    }
+    for(i in 1:M){
+        poisP <- dgeom(0:hostLvl, lambda[i], log=TRUE)
+        ecps[,i] <- poisP[obsDist[,host[i]]+1]
+    }
+    list(ecps = ecps, host = host, lambda = lambda)
+}
+
+
+
+sumLogLike <- function(x, M, logLike){
+    sum(logLike[cbind(1:M, x)])
+}
+
+cvHost <- function(cvDist, lambda, cvLvl, host){
+    M <- length(lambda)
+    ecps <- matrix(0, dim(cvDist)[1], M)
+    for(i in 1:M){
+        poisP <- dgeom(0:cvLvl, lambda[i], log = TRUE)
+        ecps[,i] <- poisP[cvDist[,host[i]]+1]
+    }
+    ecps
+}
+
+EMinit <- function(distMat, k, diffP=0.05){
+    n <- dim(distMat)[1]
+    clusterLab <- pam(x = distMat, k=k, diss = FALSE, cluster.only=TRUE)
+    initP <- matrix(0, nrow = n, ncol = k)
+    initP[cbind(1:n, clusterLab)] <- diffP
+    initP <- initP + (1-diffP) / k
+    initP
+}
 

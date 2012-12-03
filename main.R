@@ -1,46 +1,13 @@
-##################################################
-## Distance matrix for sequences
-## load the libraries
-source("http://www.bioconductor.org/biocLite.R")
-biocLite("Biostrings")
-library(Biostrings)
-library(ape)
-data(woodmouse)
+library(phangorn)
+## library(abind)
+library(inline)
+library(RcppArmadillo)
+## Cannot work in R2.14
+## library(openNLP)
 
-## preparation
-nSeq <- dim(workingDf)[1]
-distMat <- matrix(nrow=nSeq, ncol=nSeq)
-rownames(distMat) <- workingDf$Isolate
-colnames(distMat) <- workingDf$Isolate
-
-## specify the substitution matrix
-subMat <- nucleotideSubstitutionMatrix(match = 1, mismatch = -3)
-
-masim <- sapply(1:(nSeq-1), function(x) sapply((x+1):nSeq, function(y) try(pid(pairwiseAlignment(workingDf$Seq[x], workingDf$Seq[y], substitutionMatrix=subMat, gapOpening = -5, gapExtension = -2)))))
-
-## get the symetric distance matrix and diagonal element.
-for(i in 1:(nSeq-1)){
-    distMat[(i+1):nSeq, i] <- distMat[i, (i+1):nSeq] <- 1 - masim[[i]]/100
-}
-diag(distMat) <- 0
-
-
-
-
-
-
-##################################################
-## dist mat for clustering
-##################################################
-
-set.seed(42)
-tb <- read.tree(text = "((a,b,c),(d,e,f));")
+tb <- read.tree(text = "((a,b,c),(d,e,f),(g,h));")
 tb <- reorderPruning(tb)
 tb$edge.length <- c(0.1,0.1,0.1,0.1,0.1,0.1,0.2,0.2)
-plot(tb)
-
-library(nnls)
-## testing least square fitting on DNA sequences
 sb <- simSeq(tb, l=500)
 X <- designTree(tb)
 X <- designUnrooted(tb)
@@ -53,225 +20,264 @@ a <- nnls.tree(distb, tb)
 b <- nnls(dataTree$X, dataTree$y)
 b <- cluster.nnls(dataTree$y, dataTree$X)
 index <- c(1,5)
-library(Matrix)
-library(MatrixModels)
 
-dataTree <- designObsClade(distb)
-initP <- matrix(c(rep(0.55,3),rep(0.45,3), rep(0.45,3), rep(0.55,3)), 6,2)
 
-w <- combp(dataTree$X, initP)
-b <- cluster.nnls(dataTree$y, dataTree$X, w = w)
+
+
+
+## Examples:
+
+a <- simClSeq(2, 6, group = c(3,3), outLen = 0.1, inLen = 0.2)
+a <- simDistMat(2, 6, group = c(3,3), outLen = 0.1, inLen = 0.2, sig = 0.01)
+
+##################################################
+# Simulation: Comparing using one trait alone vs. using two
+#################################################
+
+aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.1, inLen = 0.2, returnTree =TRUE)
+tc <- aSeq$tree
+a <- pcl(aSeq$tree, aSeq$seq)
+P <- a$P[1,1][[1]]
 
 
 set.seed(42)
-b.result <- list()
-for(i in 1:1000){
-    p <- 0.5 + runif(12, 0, 0.1)
-    initP <- matrix(p, 6, 2)
-    b <- cluster.em(dataTree$y, dataTree$X, pMat = initP, maxIter = 100)
-    b.result[[i]] <- b$Ez
+simResult <- list()
+convResult <- list()
+for(i in 1:20){
+    initP <- randomPMat(pDiff = 0.05, 2, 10)
+    aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.3, inLen = 0.1, l=200)
+    aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.3, inLen = 0.1, sig = 0.5)
+    tryCatch({tempResult <- mtCluster(seqData = aSeq, P = P, distMat = aDist, M=2, initP = initP, maxIter = 100, tol = 1e-4); simResult[[i]] <- tempResult$Ez; convResult[[i]] <- tempResult$convergence},
+             error =function(e)
+         {a <<- list(initP=initP, seq = aSeq, dist =aDist)
+          print(i)}
+             )
 }
-nCorrect(tc = tb, r = b.result)
 
 
-##################################################
-## Use real distance matrix from mammalian hosts:
-##################################################
-mamData <- designObsClade(hostDistMat)
-initMamP <- randomPMat(0.1, 6, 267)
-mamR1 <- cluster.em(mamData$y, mamData$X, pMat = initMamP, maxIter = 10)
+nCorrect(tc = tc, r=simResult)
+monotoneEM(convResult)
 
-##################################################
-## EM aglorithm for host with mixed MVnormal
-##################################################
 
-EMmix <- function(x, theta, fixsig = TRUE) {
-    mu <- theta$mu
-    sigma <- theta$sigma
-    p <- theta$p
-    M <- dim(mu)[1]
-    uniqueX <- diag(dim(x)[2])
-    lookup <- apply(x,1,function(x) which(x==1))
-    ## E step
-    Ez <- matrix(, dim(x)[1], M)
-    dXp <- matrix(, dim(x)[2], M)
-    for(j in 1:M){
-        distX <- 0
-        for(k in 1:dim(x)[2]){
-            distX[k] <- sqrt(sum((uniqueX[k,] - mu[j,])^2))
+## Testing clustering for DNA sequences.
+
+set.seed(42)
+simResult <- list()
+convResult <- list()
+
+nSeq <- c(25, 50, 100)
+edgeLength <- c(0.2, 0.5, 1)
+nCluster <- c(2,3,4)
+
+for(iSeq in nSeq){
+    for(iedge in edgeLength)
+        for(iCluster in nCluster){
+            for(i in 1:100){
+                initP <- randomPMat(pDiff = 0.05, iCluster, iSeq)
+                iGroup <- table(sample(1:iCluster, iSeq - 5 * iCluster, replace =TRUE))
+                aSeq <- simClSeq(iCluster, iSeq, group = c(5,5), outLen = 0.5, inLen = 0.5, l=20)
+                tempResult <- DNACluster(seqData = aSeq, initP = initP, maxIter = 100, tol = 1e-4, P=P, method = "EMmn")
+}
+
         }
-        dXp[,j] <- p[j] * dnorm(x=distX, sd=sigma[j])
-        Ez[,j] <- dXp[lookup, j]
     }
-    Ez <- sweep(Ez, 1, rowSums(Ez), "/")
-    colSums.Ez <- colSums(Ez)
-    ## M step
-    mu.new <- mu
-    for(j in 1:M){
-        mu.new[j,] <- colSums(x * Ez[,j])
-    }
-    mu.new <- mu.new / colSums.Ez
-    sqRes <- matrix(0, dim(x)[1], M)
-    for(j in 1:M){
-        sqRes[,j] <- apply(x, 1, function(x) sum((x-mu.new[j,])^2))
-    }
-    sigma.new <- sqrt(colSums(Ez * sqRes) / colSums.Ez)
-    p.new <- colSums.Ez / sum(colSums.Ez)
-    ## pack up result
-    list(mu = mu.new, sigma = sigma.new, p = p.new)
 }
 
+## is DNA monotone in EM???
 
-EMmixFit <- function(x, theta, maxIter, tol){
-    for( i in 1:maxIter){
-        thetaNew <- EMmix(x, theta)
-        if(sum( (thetaNew$mu - theta$mu)^2 ) < tol) break
-        else theta <- thetaNew
-    }
-    theta$nIter <- i
-    theta
+for(i in 1:100){
+    initP <- randomPMat(pDiff = 0.05, 2, 10)
+    aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.5, inLen = 0.5, l=20)
+    tempResult <- DNACluster(seqData = aSeq, initP = initP, maxIter = 100, tol = 1e-4, P=P, method = "EMmn")
+    simResult[[i]] <- tempResult$Ez;
+    convResult[[i]] <- tempResult$convergence
 }
 
+monotoneEM(convResult)
 
-testMV <- matrix(0,10,3)
-testMV[1:5,1] <- 1
-testMV[6:8,2] <- 1
-testMV[9:10,3] <- 1
-init <- list(p=c(0.5,0.5), sigma=c(0.2,0.2), mu = matrix(c(0.4,0.2,0.3,0.4,0.3,0.4),2,3))
+## is DistMat monotone in EM???
+set.seed(42)
+simResult <- list()
+convResult <- list()
+
+for(i in 1:20){
+    initP <- randomPMat(pDiff = 0.05, 2, 10)
+    aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.1, inLen = 0.2, sig = 0.1)
+    tryCatch({tempResult <- DistCluster(distMat = aDist, M=2, initP = initP, maxIter = 100, tol = 1e-4); simResult[[i]] <- tempResult$Ez.old; convResult[[i]] <- tempResult$convergence},
+             error =function(e)
+         {a <<- list(initP=initP, dist =aDist)
+          print(i)}
+             )
+}
+
+nCorrect(tc = tc, r=simResult)
+monotoneEM(convResult)
+
+initP <- randomPMat(pDiff = 0.05, 2, 10)
+aDist <- simDistMat(2, 10, group = c(5,5), outLen = 0.2, inLen = 0.3, sig = 0.1)
+
+initP <- matrix(c(rep(0.1,5), rep(0.9,10), rep(0.1,5)), 10,2)
+
+set.seed(42)
+tempResult <- DistCluster(distMat = aDist, M=2, initP = initP, maxIter = 4, tol = 1e-4)
+
+## New likelihood for hosts!!!
 
 
-EMmix(testMV, init, fixsig = TRUE)
-EMmixFit(testMV, init, tol=1E-20, maxIter = 2)
+distMat <- matrix(c(0,1,2,2,
+                    1,0,2,2,
+                    2,2,0,1,
+                    2,2,1,0),
+                  4,4)
+
+set.seed(42)
+eObs <- c(sample(c(1,2), 6, replace = TRUE), sample(c(3,4),6,replace =TRUE))
+error <- rgeom(12, prob=0.6)
+error[error > 2] <- 2
+obs <- apply(cbind(distMat[eObs,], error), 1, FUN = rObs)
+initP <- randomPMat(pDiff = 0.05, 2, 12)
+hostCluster(obs, distMat, initP, maxIter = 200, model="normal")
+
+## Test the new host likelihood with sequences.
+distMat <- matrix(c(0,1,2,2,
+                    1,0,2,2,
+                    2,2,0,1,
+                    2,2,1,0),
+                  4,4)
+
+set.seed(42)
+eObsHost <- c(sample(c(1,2), 6, replace = TRUE), sample(c(3,4),6,replace =TRUE))
+errorHost <- rgeom(12, prob=0.6)
+errorHost[errorHost > 2] <- 2
+obsHost <- apply(cbind(distMat[eObsHost,], errorHost), 1, FUN = rObs)
+initP <- randomPMat(pDiff = 0.05, 2, 12)
+
+## Simulation for multiple trait:
+## One simple example:
+obsSeq <- simClSeq(2, 12, group = c(6,6), outLen = 0.3, inLen = 0.1, l=200)
+mtCluster(obsSeq, obsHost=obsHost, distMat=distMat, initP = initP)
+##
 
 
 ##################################################
-## Distance matrix for places
-## install.packages("maps")
-siteNstate <- paste(workingDf$Site, workingDf$State)
-unique(siteNstate)
-write.csv(sites, file = "sites.csv")
+## Simulation for cross-validation
+## A simple CV:
+distMat <- matrix(c(0,1,2,3,3,
+                    1,0,2,3,3,
+                    2,2,0,3,3,
+                    3,3,3,0,1,
+                    3,3,3,1,0),
+                  5,5)
 
 
+set.seed(42)
+eObsHost <- c(sample(c(1,2,3), 15, replace = TRUE), sample(c(4,5),15,replace =TRUE))
+errorHost <- rgeom(30, prob = 0.6)
+errorHost[errorHost > 3] <- 3
+obsHost <- apply(cbind(distMat[eObsHost,], errorHost), 1, FUN = rObs)
+obsSeq <- simClSeq(2, 30, group = c(15,15), outLen = 0.3, inLen = 0.1, l=200)
+initP <- randomPMat(pDiff = 0.05, 1, 30)
 
+
+cvDataList <- list(obsSeq=obsSeq, P=P, obsHost=obsHost, distMat = distMat)
+cvll <- cvCluster(cvDataList, 30, maxCluster = 3, mCV=100, beta=0.5)
 
 
 ##################################################
-## try phangorn
-library(ape)
-library(phangorn)
-library(multicore)
-primates <- read.phyDat("primates.dna", format="phylip", type="DNA")
-dm <- dist.dna(as.DNAbin(primates))
-treeUPGMA <- upgma(dm)
-treeNJ <- NJ(dm)
-plot(treeUPGMA, main="UPGMA")
-plot(treeNJ, "unrooted", main="NJ")
-
-fit <- pml(treeNJ, data=primates)
-fit$weight
-trCl <- list()
-class(trCl) <- "phylo"
-trCl$Nnode <- 3
-tc$edge <- matrix(c(5,1,5,2,6,3,6,4,7,5,7,6),ncol=2 , byrow=TRUE)
-trCl$tip.label <- c("A","B","C","D", "E", "F")
-plot(trCl, "cladogram")
-
-
-Ntip <- length(treeNJ$tip.label)
-Nedge <- dim(treeNJ$edge)[1]
-Nnode <- treeNJ$Nnode
-ROOT <- Ntip + 1
-yy <- numeric(Ntip + Nnode)
-pc <- pml(tree = tc, data = sc)
-
-
-
-library(phangorn)
-library(abind)
-library(inline)
-library(RcppArmadillo)
-library(nnls)
-
-
-postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=paste( readLines( "Source/likelihood.cpp"), collapse = "\n" ))
-
-
-
+## CV: 2 clusters are prefered:
+distMat <- matrix(c(0,1,2,2,
+                    1,0,2,2,
+                    2,2,0,1,
+                    2,2,1,0),
+                  4,4)
 
 set.seed(42)
-tc <- read.tree(text = "((a,b,c),(d,e,f));")
-tc$edge.length <- c(0.3,0.1,0.1,0.1,0.3,0.1,0.1,0.1)
-sc <- simSeq(tc, l=30)
-a <- pcl(tc, sc)
-P <- a$P[1,1][[1]]
-contrast <- attr(sc, "contrast")
-nrs <- as.integer(length(sc$a))
-ncs <- as.integer(attr(sc,"nc"))
-ecps <- matrix(c(0.6,0.6,0.4,0.4,0.4,0.4,0.6,0.6), 4, 2)
-initP <- matrix(c(rep(0.55,3),rep(0.45,3), rep(0.45,3), rep(0.55,3)), 6,2)
-
-
-b <- postRcpp(data=sc[tc$tip.label], P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=18, bfs=c(0.25,0.25,0.25,0.25), ecps=initP)
-
-
-sDNAc <- as.DNAbin(sc)
-distc <- as.matrix(dist.dna(sDNAb))
-y <- distb[lower.tri(distb)]
-dataTree <- designObsClade(distb)
-
-## try this
-debug(mtCluster)
-mtCluster(sc, P = P, distMat = distb, M = 2, initP=initP, maxIter = 50, tol = 1e-10)
-
-
-plot(tc, "cladogram")
-ecps <- matrix(c(0.6,0.6,0.4,0.4,0.4,0.4,0.6,0.6), 4, 2)
-system.time(temp <- seqEM(tree=tc, seqData=sc, P=P, init=ecps2, iter=50, method="cpp"))
-
-
-
-
-r <- list()
-system.time(r <- simseqEM(tc=tc[[2]],P=P, iter=100))
-
-
-tc <- list()
-tc[[1]] <- read.tree(text = "((a,b,c,d,e),(f,g,h,i));")
-tc[[2]] <- read.tree(text = "((a,b,c),(d,e,f),(g,h,i));")
-set.seed(42)
-
-
-nCorrect(tc[[2]], r, 0.8)
-
-set.seed(42)
-n75 <- n90 <- n95 <- nC <- matrix(,6,2)
-edges <- seq(0.05,0.3,by=0.05)
-for(i in 1:length(edges)){
-    for(j in 1:2){
-        r <- simseqEM(tc=tc[[j]],P=P, edgeLength = edges[i], iter=500)
-        nC[i,j] <- nCorrect(tc[[j]], r, 0)
-        n75[i,j] <- nCorrect(tc[[j]], r, 0.75)
-        n90[i,j] <- nCorrect(tc[[j]], r, 0.9)
-        n95[i,j] <- nCorrect(tc[[j]], r, 0.95)
-    }
+cvll <- list()
+for(i in 1:100){
+    eObsHost <- c(sample(c(1,2), 15, replace = TRUE), sample(c(3,4),15,replace =TRUE))
+    errorHost <- rgeom(30, prob = 0.6)
+    errorHost[errorHost > 2] <- 2
+    obsHost <- apply(cbind(distMat[eObsHost,], errorHost), 1, FUN = rObs)
+    obsSeq <- simClSeq(2, 30, group = c(15,15), outLen = 0.3, inLen = 0.1, l=200)
+    initP <- randomPMat(pDiff = 0.05, 1, 30)
+    cvDataList <- list(obsSeq=obsSeq, P=P, obsHost=obsHost, distMat = distMat)
+    cvll[[i]] <- cvCluster(cvDataList, 30, maxCluster = 3, mCV=100, beta=0.5)
 }
 
+cvSim <- rep(0,3)
+for(i in 1:100){
+    cvSim <- cvSim + (cvll[[i]] == max(cvll[[i]]))
+}
 
-sum(sc[[1]]==sc[[2]])
-sum(sc[[1]]==sc[[3]])
-sum(sc[[1]]==sc[[4]])
-sum(sc[[2]]==sc[[4]])
-sum(sc[[2]]==sc[[3]])
-sum(sc[[4]]==sc[[3]])
+##################################################
+## two moon
+##################################################
+library(spa)
+
+set.seed(100)
+twoMoons <- spa.sim(type="moon")
+plot(twoMoons$x1, twoMoons$x2)
+distMat <- sqrt(outer(twoMoons$x1, twoMoons$x1, FUN = "-") ^ 2 + outer(twoMoons$x2, twoMoons$x2, FUN = "-") ^ 2)
 
 
-nrs <- as.integer(length(sc$a))
-ncs <- as.integer(attr(sc,"nc"))
-contrast <- attr(sc, "contrast")
+twoC <- list()
+twoC$x1 <- c(rnorm(103), rnorm(103) + 3)
+twoC$x2 <- c(rnorm(103), rnorm(103) + 3)
+distMat2c <- sqrt(outer(twoC$x1, twoC$x1, FUN = "-") ^ 2 + outer(twoC$x2, twoC$x2, FUN = "-") ^ 2)
+plot(twoMoons$x1, twoMoons$x2)
 
 
-a <- pcl(tc, sc)
-P <- a$P[1,1][[1]]
-contrast <- a$contrast
-b <- contrast %*% P[1,1][[1]]
+## initP <- matrix(c(rep(0.7,103), rep(0.3,206), rep(0.7,103)),206,2)
+initP <- randomPMat(pDiff = 0.1, 2, 206)
+mmTm2 <- mmEm(distMat, initP =initP, tol=1e-08, maxIter = 1)
+notCorrect <- as.logical(abs((mmTm$Ez < 0.5) [,1]  - c(rep(1,103), rep(0,103))))
+points(twoMoons$x1[notCorrectNormal], twoMoons$x2[notCorrectNormal], col = 2)
+notCorrectNormal <- as.logical(4* twoMoons$x1 -6 - twoMoons$x2 > 0)
+notCorrectNormal[104:206] <- FALSE
 
+##' ##' <description>
+##'
+##' <details>
+##' @title
+##' @param y1 Data
+##' @param y2 Data
+##' @param x1 Prediction
+##' @param x2 Prediction
+##' @param t
+##' @param theta
+##' @return
+##' @author Ziqian Zhou
+mmEmPred <- function(y1, y2, x1, x2, t, theta){
+    M <- dim(t)[2]
+    n <- dim(t)[1]
+    distXY <- sqrt(outer(x1, y1, FUN = "-") ^ 2 + outer(x2, y2, FUN = "-") ^ 2)
+    distYY <- sqrt(outer(y1, y1, FUN = "-") ^ 2 + outer(y2, y2, FUN = "-") ^ 2)
+    predP <- matrix(, nrow = length(x1), ncol=M)
+    dMat <- dnorm(x = distXY, mean =0, sd=theta)
+    pMat <- dnorm(x = distYY, mean = 0, sd = theta)
+
+    for(i in 1:M){
+        pMatt <- sweep(pMat, 2, t[,i], FUN = "^")
+        qi <- apply(pMatt,1, prod)
+        qi <- qi / sum(qi)
+        predP[,i] <- rowSums(sweep(dMat, 2, qi, FUN = "*"))
+    }
+    predP <- sweep(predP,1, rowSums(predP), "/")
+    predP
+}
+
+xPred <- list(x1 =c(2,4,3,3.08), x2 = c(2,-4,-2,1.345))
+
+x1Pred <-  seq(0,6,len = 200)
+x2Pred <- seq(-4,2,len = 200)
+xpredList <- list(x1 = rep(x1Pred, each=200) , x2 = rep(x2Pred, 200))
+dContour <- mmEmPred(twoMoons$x1, twoMoons$x2,xpredList$x1, xpredList$x2, mmTm$Ez, 0.5)
+mContour1 <- matrix(dContour[,1], 200,200)
+mContour2 <- matrix(dContour[,2], 200,200)
+
+mContour1 <- mContour1-0.99
+mContour1[mContour1<0] <-  0
+contour(mContour1)
+
+lines(x =c(1,2), y = c(-2,2))
+twoMoons$x1

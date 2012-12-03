@@ -11,7 +11,7 @@
 ##' @param method Whether to use R or C implement, whether to use logarithm is probability calculation. (Temporary)
 ##' @return A matrix of probabilty.
 ##' @author Ziqian Zhou
-seqEM <- function(tree, seqData, P, bf=c(0.25,0.25,0.25,0.25), init, iter=50, method="cpp"){
+seqEM <- function(tree, seqData, P, bf=c(0.25,0.25,0.25,0.25), init, iter=50, method="EMmn"){
     nrs <- as.integer(length(seqData[[1]]))
     ## ncs is number of unique codes in the sequence.
     ncs <- as.integer(attr(seqData,"nc"))
@@ -23,16 +23,43 @@ seqEM <- function(tree, seqData, P, bf=c(0.25,0.25,0.25,0.25), init, iter=50, me
         if(method=="r")  ec <- postR(seqData[tree$tip.label], P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=ec)
         if(method=="rlog") ec <- logPostR(seqData[tree$tip.label], P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=ec)
         if(method=="cpp") ec <- postRcpp(seqData[tree$tip.label], P=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=ec)
+        if(method=="EMseq"){
+            emList <- EMseqR(seqData[tree$tip.label], contrast=contrast, nrs=nrs, ncs=ncs, ecps=ec)
+            ec <- exp(emList$ecps)
+        }
+        if(method=="EMmn"){
+            emList <- EMmnR(seqData[tree$tip.label], contrast=contrast, nrs=nrs, ncs=ncs, ecps=ec)
+            ec <- exp(emList$ecps)
+        }
         ec <- ec/rowSums(ec)
+    }
+    if(method=="EMseq" | method == "EMmn"){
+        return(emList)
     }
     ec
 }
 
+seqCV <- function(cvData, contrast, ecps, nrs, ncs, y, theta){
+    ## ncs is number of unique codes in the sequence.
+    ncluster=dim(ecps)[2]
+    n <- length(cvData)
+    logp <- matrix(nrow=n, ncol=ncluster)
+    for(l in 1:ncluster){
+        for(i in 1:n){
+            nSame <- sum(y[,l] == cvData[[i]])
+            logp[i,l] <- nSame * log(1- 3* theta[l]) + (nrs - nSame) * log(theta[l])
+        }
+    }
+    return(logp)
+}
+
 postRcpp <- cxxfunction(signature(data ="list", P="matrix", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", bfs="numeric", ecps="matrix"), plugin="RcppArmadillo", body=srcLike)
 
+emSeqRcpp <- cxxfunction(signature(data ="list", contrast="matrix", nrs="integer" , ncs="integer", ncos="integer", ecps="matrix", MachineEps="double"), plugin="RcppArmadillo", body=paste( readLines("./Source/emSeq.cpp"), collapse = "\n" ))
 
+temp <- emSeqRcpp(data=seqData, contrast=contrast, nrs=nrs, ncs =ncs, ncos=ncos, ecps=Ez, MachineEps=.Machine$double.eps)
 
-postR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,0.25), ecps){
+tpostR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,0.25), ecps){
     ncluster=dim(ecps)[2]
     n <- length(seqData)
     post <- matrix(1, nrs, ncs)
@@ -65,7 +92,7 @@ postR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,0.2
 }
 
 
-logPostR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,0.25), ecps){
+logPostR <- function(seqData, P, contrast, nrs, ncs, bfs=c(0.25,0.25,0.25,0.25), ecps){
     ncluster=dim(ecps)[2]
     n <- length(seqData)
     post <- matrix(1, nrs, ncs)
@@ -94,6 +121,76 @@ logPostR <- function(seqData, P, contrast, nrs, ncs, ncos, bfs=c(0.25,0.25,0.25,
     return(ecn)
 }
 
+## something wrong with the default contrast.
+EMseqR <- function(seqData, contrast, nrs, ncs, ecps)
+{
+    ncluster=dim(ecps)[2]
+    n <- length(seqData)
+    logp <- matrix(nrow=n,ncol=ncluster)
+    y <- matrix(0, nrow = nrs, ncol=ncluster)
+    theta <- 0
+    pVec <- 0
+    for(l in 1:ncluster){
+        nbi <- mapply(fNbi, seq=seqData, ezil=ecps[,l], MoreArgs = list(contrast=contrast), SIMPLIFY = FALSE)
+        nbi <- Reduce("+", nbi)
+        ## Using loops:
+        ## nbi <- matrix(0, nrs, dim(contrast)[2])
+        ## for(i in 1:n){
+        ##     tmpSeq <- contrast[seqData[[i]],]
+        ##     nbi <- nbi + tmpSeq *ecps[i,l]
+        ## }
+        y[,l] <- max.col(nbi)
+        Ns <- sum(nbi[cbind(1:nrs,y[,l])])
+        sumZ <- sum(ecps[,l])
+        theta[l] <- 1/3 - Ns / 3 / nrs / sumZ
+        if(theta[l] <= 0) theta[l] <- .Machine$double.eps
+        ## set theta to the true value:
+        ## theta[l] <- 0.121645
+    }
+    for(l in 1:ncluster){
+        ## for(i in 1:n){
+        ##     nSame <- sum(y[,l] == seqData[[i]])
+        ##     logp[i,l] <- nSame * log(1- 3* theta[l]) + (nrs - nSame) * log(theta[l])
+        ## }
+        logp[,l] <- mapply(fLogp, seq = seqData, MoreArgs = list(yl = y[,l], nrs=nrs, log1N3theta=log(1-3*theta[l]), logtheta=log(theta[l])), SIMPLIFY = TRUE)
+    }
+    list(y = y, theta = theta, ecps = logp)
+}
+
+fNbi <- function(seq, ezil, contrast){
+    tmpSeq <- contrast[seq,]
+    tmpSeq * ezil
+}
+
+fLogp <- function(seq, yl, nrs, log1N3theta, logtheta){
+    nSame <- sum(yl == seq)
+    nSame* log1N3theta + (nrs - nSame) * logtheta
+}
+
+EMmnR <- function(seqData, contrast, nrs, ncs, ecps)
+{
+    ncluster=dim(ecps)[2]
+    n <- length(seqData)
+    logp <- matrix(nrow=n,ncol=ncluster)
+    y <- list()
+    theta <- 0
+    for(l in 1:ncluster){
+        nbi <- matrix(0, nrs, ncs)
+        for(i in 1:n){
+            tmpSeq <- contrast[seqData[[i]],]
+            nbi <- nbi + tmpSeq *ecps[i,l]
+        }
+        sumZ <- sum(ecps[,l])
+        y[[l]] <- nbi / sumZ
+        theta[l] <- 1/3 - sum(nbi[cbind(1:nrs,max.col(nbi))]) / 3 / nrs / sumZ
+    }
+    for(l in 1:ncluster){
+        for(i in 1:n){
+            logp[i,l] <- sum(log(y[[l]][cbind(1:nrs, seqData[[i]])]))
+        }
+    }
+    list(y = y, theta = theta, ecps = logp)
+}
 
 simseqEM <- function(tc, iter=100, seqLength=100, initRange = 0.05, edgeLength, P, method="cpp"){
     nTips <- length(tc$tip.label)

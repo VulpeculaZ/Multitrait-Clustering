@@ -12,6 +12,8 @@ source("./Source/DNAcluster.R")
 seqDf <- readSeq(path="./seqs_new")
 infoDf <- read.csv("seqinfo.csv", stringsAsFactors =FALSE, sep=";")
 matchedDf <- matchSeq(seqDf, infoDf)
+MultiMatch <- subset(matchedDf, Seq == "Multiple matches")$Isolate
+noMatch <- subset(matchedDf, Seq == "No match")
 workingDf <- subset(matchedDf, Seq != "Multiple matches" & Seq != "No match" & nchar(Seq) < 350 & nchar(Seq) > 320)
 hist(unlist(lapply(workingDf$Seq,FUN=nchar)))
 
@@ -92,11 +94,16 @@ randomPMat <- function(percentDiff, m, n){
     pMat <- pMat / rowSums(pMat)
 }
 
-initDataP <- randomPMat(0.1, 6, 267)
 
 debug(mtCluster)
-
-mtDataResult <- mtCluster(finalPhy, P = P, obsHost = hostDistMat$obsHost, distMat=hostDistMat$distMat, M = 6, initP=initDataP, maxIter = 100, tol = 1e-10, CV=list(obsHost=hostDistMat$obsHost, seq=finalPhy))
+## Test mtCluster()
+phyDNA <- as.DNAbin(finalPhy)
+distMat <- as.matrix(dist.dna(phyDNA))
+initDataP <- EMinit(distMat, 2, diffP = 0.9)
+## debug(mtCluster)
+## initP[[5]] <- DNADataResult$Ez[,4:8]
+mtDataResult <- mtCluster(finalPhy, obsHost = hostDistMat$obsHost, distMat=hostDistMat$distMat,  initP=initPList[[2]], maxIter = 100, tol = 1e-10)
+DNADataResult <- DNACluster(finalPhy, initP=initDataP)
 Ez <- mtDataResult$Ez
 maxEz <- apply(Ez, 1, function(x) which(x==max(x)))
 
@@ -104,7 +111,7 @@ hostInitP <- matrix(c(rep(0.9,5),rep(0.1, 262), rep(0.1,5), rep(0.9, 262)),267,2
 hostResult <- hostCluster(obsHost = hostDistMat$obsHost, distMat=hostDistMat$distMat, initP = randomPMat(0.1, 2, 267), model= "normal")
 
 save.image()
-cvDataListobs <- list(obsSeq=finalPhy, P=P, obsHost=hostDistMat$obsHost, distMat = hostDistMat$distMat)
+cvDataListobs <- list(obsSeq=finalPhy, obsHost=hostDistMat$obsHost, distMat = hostDistMat$distMat)
 
 
 ## 2: 8:15
@@ -254,7 +261,7 @@ sort(host[[1]])
 ## pie chart:
 slices <- lbls <- colorPie <- list()
 hostNames <- paste(hostDf[,2], hostDf[,1])
-for(i in 1:4){
+for(i in 1:2){
     slices[[i]] <- 0
     lbls[[i]] <- 0
     unisp <- unique(host[[i]])
@@ -279,3 +286,52 @@ pie(slices[[3]], lbls[[3]], col=colorPie[[3]])
 pie(slices[[4]], lbls[[4]],col=colorPie[[4]])
 
 
+
+ mtResult <- mtCluster(finalPhy, obsHost = hostDistMat$obsHost, distMat=hostDistMat$distMat,  initP=initPList[[2]], maxIter = 100, tol = 1e-6)
+DNAresult <-  DNACluster(finalPhy,  initP=initPList[[2]], maxIter = 100, tol = 1e-6)
+
+idDNA <- max.col(mtResult$Ez)
+idmt <-  max.col(DNAresult$Ez)
+
+## Host distribution:
+hostDNA <- hostMt<- list()
+for(i in 1:2){
+    hostDNA[[i]] <- sort(hostDistMat$obsHost[which(idDNA==i)])
+    hostMt[[i]] <- sort(hostDistMat$obsHost[which(idmt==i)])
+}
+## pie chart:
+## DNA
+slices <- lbls <- colorPie <- list()
+hostNames <- paste(hostDf[,2], hostDf[,1])
+for(i in 1:2){
+    slices[[i]] <- 0
+    lbls[[i]] <- 0
+    unisp <- unique(hostDNA[[i]])
+    colorPie[[i]] <- unisp
+    for(j in 1:length(unisp)){
+        slices[[i]][j] <- sum(hostDNA[[i]] == unisp[j])
+        lbls[[i]][j] <- paste(hostNames[unisp[j]], "\n", slices[[i]][j], sep="")
+    }
+}
+
+pie(slices[[1]], lbls[[1]])
+pie(slices[[2]], lbls[[2]])
+
+## pie chart:
+## mt
+slices <- lbls <- colorPie <- list()
+hostNames <- hostDf[,1]
+for(i in 1:2){
+    slices[[i]] <- 0
+    lbls[[i]] <- 0
+    unisp <- unique(hostMt[[i]])
+    colorPie[[i]] <- unisp
+    for(j in 1:length(unisp)){
+        slices[[i]][j] <- sum(hostMt[[i]] == unisp[j])
+        lbls[[i]][j] <- paste(hostNames[unisp[j]], "\n", slices[[i]][j], sep="")
+    }
+}
+
+pie(slices[[1]], lbls[[1]])
+pie(slices[[2]], lbls[[2]])
+unisp

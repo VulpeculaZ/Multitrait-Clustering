@@ -2,11 +2,14 @@ library(phangorn)
 ## library(abind)
 library(inline)
 library(RcppArmadillo)
-## Cannot work in R2.14
 ## library(openNLP)
+library(combinat)
+library(parallel)
+library(cluster)
+library(nnet)
 
 tb <- read.tree(text = "((a,b,c),(d,e,f),(g,h));")
-tb <- reorderPruning(tb)
+tb <-  phangorn:::reorderPruning(tb)
 tb$edge.length <- c(0.1,0.1,0.1,0.1,0.1,0.1,0.2,0.2)
 sb <- simSeq(tb, l=500)
 X <- designTree(tb)
@@ -30,13 +33,14 @@ index <- c(1,5)
 a <- simClSeq(2, 6, group = c(3,3), outLen = 0.1, inLen = 0.2)
 a <- simDistMat(2, 6, group = c(3,3), outLen = 0.1, inLen = 0.2, sig = 0.01)
 
-
 ##################################################
-## Simulation: Comparing using one trait alone vs. using two
-##################################################
+# Simulation: Comparing using one trait alone vs. using two
+#################################################
 
-aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.1, inLen = 0.2, returnTree =TRUE)
+aSeq <- simClSeq(2, 6, group = c(3,3), outLen = 1, inLen = 1, returnTree =TRUE)
 tc <- aSeq$tree
+tc$tip.label <- c("a","b", "c", "d", "e", "f")
+plot(tc)
 a <- pcl(aSeq$tree, aSeq$seq)
 P <- a$P[1,1][[1]]
 
@@ -60,18 +64,112 @@ nCorrect(tc = tc, r=simResult)
 monotoneEM(convResult)
 
 
-## is DNA monotone in EM???
+## Testing clustering for DNA sequences.
 
 set.seed(42)
-simResult <- list()
+dimnames = c("metho", "nSeq", "nCluster", "edgeLength")
+ratioCorrect <- array(dim = c(2,3,3,4))
+meanTheta <- sdTheta<- array(dim = c(2,3,3,4))
+thetaAll <- list()
+
 convResult <- list()
+nSeq <- c(24, 48, 96)
+edgeLength <- c(0.2, 0.5, 1, 2)
+nCluster <- c(2,3,4)
+edgeRatio <- c(1,2)
+j <- 1
+
+for(iRatio in edgeRatio){
+for(iSeq in nSeq){
+    for(iCluster in nCluster){
+        for(iedge in edgeLength){
+            iGroup <- rep(iSeq/iCluster, iCluster)
+            resultSeqEz <- list()
+            resultMNEz <- list()
+            resultSeqTheta <- list()
+            resultMNTheta <- list()
+            for(i in 1:100){
+                tempSeq <- simClSeq(iCluster, iSeq, group = iGroup, outLen = iedge, inLen = iedge * iRatio, l=100)
+                tempDNA <- as.DNAbin(tempSeq)
+                distMat <- as.matrix(dist.dna(tempDNA, model = "raw"))
+                initP <- EMinit(distMat, iCluster, diffP = 0.1)
+                tempSeqEM <- DNACluster(seqData = tempSeq, initP = initP, maxIter = 100, tol = 1e-5)
+                resultSeqEz[[i]] <- tempSeqEM$Ez
+                resultSeqTheta[[i]] <- tempSeqEM$theta
+                if(any(is.na(tempSeqEM$theta))){
+                    badSeq <- tempSeq
+                    badInitP <- initP
+                    break()
+                }
+            }
+            thetaAll[[j]] <- unlist(resultSeqTheta)
+            j <- j + 1
+            ratioCorrect[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), which(iedge==edgeLength)] <- nCorrect(iGroup, resultSeqEz)
+            meanTheta[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), which(iedge==edgeLength)] <- mean(unlist(resultSeqTheta),na.rm = TRUE)
+            sdTheta[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), which(iedge==edgeLength)] <- sd(unlist(resultSeqTheta), na.rm = TRUE)
+        }
+    }
+}
+}
+
+
+## Testing the distribution of theta.
+
+set.seed(42)
+dimnames = c("nCluster", "edgeLength")
+sdTheta <- 0
+thetaAll <- list()
+edgeLength <- c(0.2, 0.5, 1)
+iRatio <- 2
+iSeq <- 96
+j <- 1
+
+for(iCluster in nCluster){
+    for(iedge in edgeLength){
+        iGroup <- rep(iSeq/iCluster, iCluster)
+        for(i in 1:100){
+            tempSeq <- simClSeq(iCluster, iSeq, group = iGroup, outLen = iedge, inLen = iedge * iRatio, l=100)
+            tempDNA <- as.DNAbin(tempSeq)
+            distMat <- as.matrix(dist.dna(tempDNA, model = "raw"))
+            initP <- EMinit(distMat, iCluster, diffP = 0.1)
+            tempSeqEM <- DNACluster(seqData = tempSeq, initP = initP, maxIter = 100, tol = 1e-5)
+            resultSeqEz[[i]] <- tempSeqEM$Ez
+            resultSeqTheta[[i]] <- tempSeqEM$theta
+        }
+        thetaAll[[j]] <- unlist(resultSeqTheta)
+        sdTheta[j] <- sd(unlist(resultSeqTheta))
+        j <- j + 1
+    }
+}
+
+thetaStd <- list()
+
+par(mfrow=c(3,3))
+
+for(j in 1:9){
+    thetaStd[[j]] <- (thetaAll[[j]] - mean(thetaAll[[j]])) / sdTheta[j]
+    qqnorm(thetaStd[[j]], main=NULL)
+    qqline(thetaStd[[j]])
+}
+
+qqnorm
+## boot simulation
+
+
+tempSeqEM <- DNACluster(seqData = badSeq, initP = initP, maxIter = 100, tol = 1e-4,  method = "EMseq")
+
+
+## is DNA monotone in EM???
+
 for(i in 1:100){
     initP <- randomPMat(pDiff = 0.05, 2, 10)
-    aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.3, inLen = 0.1, l=200)
-    tempResult <- DNACluster(seqData = aSeq, initP = initP, maxIter = 100, tol = 1e-4)
+    aSeq <- simClSeq(2, 10, group = c(5,5), outLen = 0.5, inLen = 0.5, l=50)
+    tempResult <- DNACluster(seqData = aSeq, initP = initP, maxIter = 100, tol = 1e-4,  method = "EMseq")
     simResult[[i]] <- tempResult$Ez;
     convResult[[i]] <- tempResult$convergence
 }
+
+monotoneEM(convResult)
 
 ## is DistMat monotone in EM???
 set.seed(42)
@@ -113,8 +211,8 @@ eObs <- c(sample(c(1,2), 6, replace = TRUE), sample(c(3,4),6,replace =TRUE))
 error <- rgeom(12, prob=0.6)
 error[error > 2] <- 2
 obs <- apply(cbind(distMat[eObs,], error), 1, FUN = rObs)
-initP <- randomPMat(pDiff = 0.05, 2, 12)
-hostCluster(obs, distMat, initP, maxIter = 200, model="normal")
+initP <- matrix(c(rep(0.55, 6), rep(0.45, 12), rep(0.55, 6)),12,2)
+hostCluster(obs, distMat, initP, maxIter = 200, model="geom")
 
 ## Test the new host likelihood with sequences.
 distMat <- matrix(c(0,1,2,2,
@@ -155,8 +253,6 @@ errorHost[errorHost > 3] <- 3
 obsHost <- apply(cbind(distMat[eObsHost,], errorHost), 1, FUN = rObs)
 obsSeq <- simClSeq(2, 30, group = c(15,15), outLen = 0.3, inLen = 0.1, l=200)
 initP <- randomPMat(pDiff = 0.05, 1, 30)
-
-
 cvDataList <- list(obsSeq=obsSeq, P=P, obsHost=obsHost, distMat = distMat)
 cvll <- cvCluster(cvDataList, 30, maxCluster = 3, mCV=100, beta=0.5)
 
@@ -185,6 +281,192 @@ for(i in 1:100){
 cvSim <- rep(0,3)
 for(i in 1:100){
     cvSim <- cvSim + (cvll[[i]] == max(cvll[[i]]))
+}
+
+##################################################
+## Test for speed
+obsSeq <- simClSeq(2, 500, group = c(250,250), outLen = 0.1, inLen = 0.3, l=500)
+initP <- randomPMat(pDiff = 0.05, 2, 500)
+system.time(tempSeqEM <- DNACluster(seqData = obsSeq, initP = initP, maxIter = 100, tol = 1e-5,  method = "EMseq"))
+system.time(tempSeqEMRcpp <- DNACluster(seqData = obsSeq, initP = initP, maxIter = 100, tol = 1e-5,  method = "cpp"))
+
+
+##################################################
+## Initalization using k-Medoids
+obsSeq <- simClSeq(2, 1000, group = c(500, 500), outLen = 0.1, inLen = 0.3, l=500)
+seqDNA <- as.DNAbin(obsSeq)
+distMat <- as.matrix(dist.dna(seqDNA))
+
+debug(EMinit)
+initP <- EMinit(distMat, 2)
+
+##################################################
+## Test bootstrap
+obsSeq <- simClSeq(2, 500, group = c(250,250), outLen = 0.1, inLen = 0.3, l=500)
+initP <- randomPMat(pDiff = 0.05, 2, 500)
+tempSeqEM <- DNACluster(seqData = obsSeq, initP = initP, maxIter = 100, tol = 1e-5,  method = "cpp")
+theta <- tempSeqEM$theta
+y <- tempSeqEM$y
+Ez <- tempSeqEM$Ez
+obs <- obsSeq
+
+##################################################
+## bootstrap simulation
+set.seed(42)
+initP <- matrix(c(rep(0.6,100), rep(0.4, 200), rep(0.6,100)),200,2 )
+alphaMin <- alphaQuad <- 0
+
+for(i in 1:10){
+    obsSeq <- simClSeq(2, 400, group = c(200,200), outLen = 0.1, inLen = 0.3, l=500)
+    train <- obsSeq[c(1:100, 301:400)]
+    test <- obsSeq[101:300]
+    attr(train, "contrast") <- attr(obsSeq, "contrast")
+    attr(train, "nc") <- attr(obsSeq, "nc")
+    tempSeqEM <- DNACluster(seqData = train, initP = initP, maxIter = 100, tol = 1e-5,  method = "cpp")
+    theta <- tempSeqEM$theta
+    p <- tempSeqEM$p
+    y <- tempSeqEM$y
+    Ez <- tempSeqEM$Ez
+    bTheta <- bootTheta(theta=theta, y=y, p=p,obs = train, Ez = Ez ,n=10000, percentile = 0.95)
+    cutQuad <- bTheta$qQuad
+    varScore <- bTheta$varScore
+    boot <- bootX(theta=theta, y=y, p=p, x=test, varScore = varScore)
+    ## sum(boot$bootMin > cutMin)
+    sum(boot$bootQuad > cutQuad)
+    ## alphaMin <- alphaMin + sum(boot$bootMin > cutMin)
+    alphaQuad <- alphaQuad + sum(boot$bootQuad > cutQuad)
+}
+
+set.seed(42)
+convResult <- list()
+nSeq <- c(24, 48, 96)
+edgeLength <- c(0.2, 0.5, 1)
+nCluster <- c(2,3,4)
+edgeRatio <- c(1,2)
+initP <- matrix(c(rep(0.6,100), rep(0.4, 200), rep(0.6,100)),200,2 )
+alpha <- alphaN <- matrix(0,2,3)
+testPower <- testPowerN <- matrix(0,2,3)
+cutChi <- qchisq(0.95, 1) / 200
+
+for(iRatio in edgeRatio){
+    for(iedge in edgeLength){
+        for(i in 1:100){
+            obsSeq <- simClSeq(3, n = 600, group = c(200,200,200), outLen = iedge, inLen = iedge * iRatio, l=100, ancestral = TRUE)
+            train <- obsSeq[c(1:100, 301:400)]
+            test <- obsSeq[101:300]
+            out <- obsSeq[401:600]
+            ans <- obsSeq[601:604]
+            attr(train, "contrast") <- attr(obsSeq, "contrast")
+            attr(train, "nc") <- attr(obsSeq, "nc")
+            tempSeqEM <- DNACluster(seqData = train, initP = initP, maxIter = 100, tol = 1e-8,  method = "cpp")
+            theta <- tempSeqEM$theta
+            Ez <- tempSeqEM$Ez
+            p <- tempSeqEM$p
+            y <- tempSeqEM$y
+            bTheta <- bootTheta(theta=theta, y=y, p=p,obs=train, Ez = Ez, n=10000, percentile = 0.95)
+            ## bootAns <- bootX(theta=theta, y=y, p=p, x=ans, varScore = varScore)
+            cutQuad <- bTheta$qQuad
+            varScore <- bTheta$varScore
+            boot <- bootX(theta=theta, y=y, p=p, x=test, varScore = varScore)
+            bootOut <- bootX(theta=theta, y=y, p=p, x=out, varScore = varScore)
+            ## bootArr[iRatio,  which(iedge==edgeLength), ] <- boot
+            alpha[iRatio,  which(iedge==edgeLength)] <- alpha[iRatio, which(iedge==edgeLength)] + sum(boot$bootQuad > cutQuad)
+            testPower[iRatio, which(iedge==edgeLength)] <- testPower[iRatio,  which(iedge==edgeLength)] +  sum(bootOut$bootQuad > cutQuad)
+            alphaN[iRatio,  which(iedge==edgeLength)] <- alphaN[iRatio, which(iedge==edgeLength)] + sum(boot$bootQuad > cutChi)
+            testPowerN[iRatio, which(iedge==edgeLength)] <- testPowerN[iRatio,  which(iedge==edgeLength)] +  sum(bootOut$bootQuad > cutChi)
+        }
+    }
+}
+
+
+##################################################
+## CV for DNA using EM
+initPList <- list()
+
+
+cvDataList <- list()
+cvll <- list()
+initPList <- list()
+iter <- c(2:4)
+
+set.seed(42)
+
+for(i in 1:1000){
+    cvDataList$obsSeq <- simClSeq(3, 50, group = c(20,15,15), outLen = 0.3, inLen = 0.1, l=200)
+    for(j in iter){
+        initPList[[j]] <- randomPMat(pDiff = 0.05, j, 50)
+    }
+    cvll[[i]] <- cvCluster(cvDataList, 50, maxCluster = c(2:4), mCV=100, beta=0.5, initPList = initPList)
+}
+
+cvResult <- rep(0,3)
+for(i in 1:1000){
+    colSumsCv <- colSums(cvll[[i]])
+    cvResult <- cvResult + (colSumsCv == max(colSumsCv))
+}
+
+cvResult2 <- cvResult1 <- rep(0,3)
+for(i in 1:1000){
+    maxCv <- rowSums(apply(cvll[[i]], 1, function(x) x == max(x)))
+    cvResult1 <- cvResult1 + maxCv
+    cvResult2 <- cvResult2 + (maxCv == max(maxCv))
+}
+
+nCluster <- 3
+nSeq <- seq(40, 80, by = 10)
+nLen <- c(250, 500, 1000)
+diffResult <- matrix(0,length(nSeq), length(ratio))
+nPara <- outer(nSeq, ratio)
+
+
+set.seed(42)
+for(i in nSeq){
+    for(j in ratio){
+        for(k in 1:1000){
+            tempGroup <- i * c(0.3, 0.3, 0.4)
+            tempInitP <- randomPMat(0.05, nCluster, i)
+            allSeq <- simClSeq(nCluster, i, group = tempGroup, outLen = 0.5, inLen = 0.5, l= floor(i * j), ancestral = TRUE)
+            anceSeq <- allSeq[(i+2):(i+nCluster+1)]
+            anceSeq <- matrix(unlist(anceSeq), ncol=nCluster)
+            tempSeq <- allSeq[1:i]
+            attr(tempSeq, "contrast") <- attr(allSeq, "contrast")
+            attr(tempSeq, "nc") <- attr(allSeq, "nc")
+            tempResult <- DNACluster(tempSeq, initP = tempInitP, maxIter = 100, tol = 1e-5,  method = "EMseq")
+            diffResult[which(i == nSeq), which(j == ratio)] <- diffResult[which(i == nSeq), which(j == ratio)] + mDiff(anceSeq, tempResult$y)
+        }
+    }
+}
+
+nSeq <- seq(40, 80, by = 10)
+nLen <- c(250, 500, 1000, 2000)
+testForRate <- matrix(0, length(nSeq), length(nLen))
+
+for(j in 1:length(nLen)){
+    iLen <- nLen[j]
+    for(i in 1:length(nSeq)){
+    iSeq <- nSeq[i]
+    for(k in 1:100){
+        iGroup <- c(0.5, 0.5) * iSeq
+        initP <- matrix(c(rep(0.55, iSeq /2), rep(0.45, iSeq), rep(0.55, iSeq/2)), iSeq, 2)
+        allSeq <- simClSeq(2, iSeq, iGroup, outLen= 0.5, inLen = 0.5, l=iLen, ancestral = TRUE)
+        anceSeq <- allSeq[(iSeq+2):(iSeq+3)]
+        anceSeq <- matrix(unlist(anceSeq), ncol=2)
+        tempSeq <- allSeq[1:iSeq]
+        attr(tempSeq, "contrast") <- attr(allSeq, "contrast")
+        attr(tempSeq, "nc") <- attr(allSeq, "nc")
+        tempResult <- DNACluster(tempSeq, initP = initP, maxIter = 100, tol = 1e-5,  method = "EMseqRcpp")
+        testForRate[i,j]<-  testForRate[i,j] + mDiff(anceSeq, tempResult$y)
+    }
+}
+}
+
+diffResult / 1000 /3
+
+mDiff <- function(ance, result){
+    m <- dim(ance)[2]
+    nm <- m * dim(ance)[1]
+    allPerm <- permn(x =1:m)
+    nm - max(unlist(lapply(allPerm, function(x) sum(ance[,x] == result))))
 }
 
 ##################################################
@@ -259,3 +541,4 @@ contour(mContour1)
 
 lines(x =c(1,2), y = c(-2,2))
 twoMoons$x1
+
