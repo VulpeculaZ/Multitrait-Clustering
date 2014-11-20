@@ -103,36 +103,6 @@ simDistMat <- function(M, n, group, outLen, inLen, sig){
 
 
 
-##' <description>
-##' Test the number of correctly identified clusters.
-##' <details>
-##' @title nCorrect
-##' @param tc The true tree.
-##' @param r A list of matrices of classification probabilities.
-##' @param p Cut off probabiltiy for classification. If p==0, use the cluster with highest probability as the classification result.
-##' @return The ratio of correctly identified clusters.
-##' @author Ziqian Zhou
-## nCorrect <- function(tc , r, p=0){
-##     nTips <- length(tc$tip.label)
-##     inner <- (nTips+2):(nTips+tc$Nnode)
-##     groups <- list()
-##     ratioC <- 0
-##     for(i in 1:length(inner)){
-##         groups[[i]] <- sort(as.integer(tc$edge[which(tc$edge[,1] == inner[i]), 2]))
-##     }
-##     for(i in 1:length(r)){
-##         idr <- list()
-##         maxr <- apply(r[[i]], 1, function(x) which(x==max(x)))
-##         for(j in 1:length(inner)){
-##             idr[[j]] <- sort(as.integer(which(maxr == j)))
-##             for(k in 1:length(inner)){
-##                 if(p==0) ratioC <- ratioC + identical(idr[[j]], groups[[k]])
-##                 else ratioC <- ratioC + as.integer(identical(idr[[j]], groups[[k]]) && min(r[[i]][idr[[j]],j]) > p)
-##             }
-##         }
-##     }
-##     return(ratioC / length(inner) / length(r))
-## }
 
 
 ##' <description>

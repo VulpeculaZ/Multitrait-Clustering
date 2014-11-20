@@ -16,8 +16,11 @@ MultiMatch <- subset(matchedDf, Seq == "Multiple matches")$Isolate
 noMatch <- subset(matchedDf, Seq == "No match")
 workingDf <- subset(matchedDf, Seq != "Multiple matches" & Seq != "No match" & nchar(Seq) < 350 & nchar(Seq) > 320)
 hist(unlist(lapply(workingDf$Seq,FUN=nchar)))
-
-
+sink(file = "misseq.txt")
+cat(c("Multiple matches:\n", MultiMatch, "\n"))
+cat(c("Isolates with no matched sequences:\n", noMatch, "\n"))
+sink()
+connections()
 ##################################################
 ## Distance matrix for host species
 ##################################################
@@ -40,6 +43,15 @@ finalDf <- workingDf[!is.element(workingDf$Species, excluded),]
 ## Calculate distance matrix
 hostDistMat <- hostDist(hostDf, finalDf)
 save(hostDistMat, file = "host.RData")
+
+##################################################
+## Distance matrix for places
+##################################################
+## install.packages("maps")
+siteNstate <- paste(infoDf$Site, infoDf$State)
+unique(siteNstate)
+write.csv(sites, file = "sites.csv")
+
 
 ##################################################
 ## Alignment

@@ -65,37 +65,47 @@ monotoneEM(convResult)
 
 
 ## Testing clustering for DNA sequences.
+## using EM
 
 set.seed(42)
-dimnames = c("metho", "nSeq", "nCluster", "edgeLength")
 ratioCorrect <- array(dim = c(2,3,3,4))
-meanTheta <- sdTheta<- array(dim = c(2,3,3,4))
+meanTheta <- sdTheta <- meanCover <- array(dim = c(2,3,3,3))
 thetaAll <- list()
+qcover <- 1.96
 
 convResult <- list()
 nSeq <- c(24, 48, 96)
-edgeLength <- c(0.2, 0.5, 1, 2)
+edgeLength <- c(0.2, 0.5, 1)
 nCluster <- c(2,3,4)
 edgeRatio <- c(1,2)
 j <- 1
+theta <- c(0.05851792, 0.1216457, 0.1841007)
+
+iRatio <- 0.2
+iSeq <- 24
+iCluster <- 2
+iedge <- 1
+i <- 1
 
 for(iRatio in edgeRatio){
 for(iSeq in nSeq){
     for(iCluster in nCluster){
-        for(iedge in edgeLength){
+        for(iedge in 1:3){
             iGroup <- rep(iSeq/iCluster, iCluster)
             resultSeqEz <- list()
             resultMNEz <- list()
-            resultSeqTheta <- list()
+            resultSeqTheta <- resultCoverage <- list()
             resultMNTheta <- list()
-            for(i in 1:100){
-                tempSeq <- simClSeq(iCluster, iSeq, group = iGroup, outLen = iedge, inLen = iedge * iRatio, l=100)
+            for(i in 1:1000){
+                tempSeq <- simClSeq(iCluster, iSeq, group = iGroup, outLen = edgeLength[iedge], inLen = edgeLength[iedge] * iRatio, l=100)
                 tempDNA <- as.DNAbin(tempSeq)
                 distMat <- as.matrix(dist.dna(tempDNA, model = "raw"))
                 initP <- EMinit(distMat, iCluster, diffP = 0.1)
-                tempSeqEM <- DNACluster(seqData = tempSeq, initP = initP, maxIter = 100, tol = 1e-5)
+                tempSeqEM <- DNACluster(seqData = tempSeq, initP = initP, maxIter = 100, tol = 1e-6)
+                tempSd <- sqrt(diag(varTheta(tempSeqEM, tempSeq)))[1:iCluster]
                 resultSeqEz[[i]] <- tempSeqEM$Ez
                 resultSeqTheta[[i]] <- tempSeqEM$theta
+                resultCoverage[[i]] <- (theta[iedge] < tempSeqEM$thet + tempSd * qcover) & ( theta[iedge] > tempSeqEM$thet - tempSd * qcover)
                 if(any(is.na(tempSeqEM$theta))){
                     badSeq <- tempSeq
                     badInitP <- initP
@@ -104,9 +114,10 @@ for(iSeq in nSeq){
             }
             thetaAll[[j]] <- unlist(resultSeqTheta)
             j <- j + 1
-            ratioCorrect[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), which(iedge==edgeLength)] <- nCorrect(iGroup, resultSeqEz)
-            meanTheta[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), which(iedge==edgeLength)] <- mean(unlist(resultSeqTheta),na.rm = TRUE)
-            sdTheta[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), which(iedge==edgeLength)] <- sd(unlist(resultSeqTheta), na.rm = TRUE)
+            ratioCorrect[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), iedge] <- nCorrect(iGroup, resultSeqEz)
+            meanTheta[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), iedge] <- mean(unlist(resultSeqTheta),na.rm = TRUE)
+            sdTheta[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), iedge] <- sd(unlist(resultSeqTheta), na.rm = TRUE)
+            meanCover[iRatio, which(iSeq==nSeq), which(iCluster==nCluster), iedge] <- mean(unlist(resultCoverage),na.rm = TRUE)
         }
     }
 }
@@ -121,6 +132,7 @@ sdTheta <- 0
 thetaAll <- list()
 edgeLength <- c(0.2, 0.5, 1)
 iRatio <- 2
+
 iSeq <- 96
 j <- 1
 
@@ -322,6 +334,9 @@ for(i in 1:10){
     test <- obsSeq[101:300]
     attr(train, "contrast") <- attr(obsSeq, "contrast")
     attr(train, "nc") <- attr(obsSeq, "nc")
+    attr(train, "index") <- attr(obsSeq, "index")
+    attr(train, "weight") <- attr(obsSeq, "weight")
+
     tempSeqEM <- DNACluster(seqData = train, initP = initP, maxIter = 100, tol = 1e-5,  method = "cpp")
     theta <- tempSeqEM$theta
     p <- tempSeqEM$p
@@ -337,6 +352,9 @@ for(i in 1:10){
     alphaQuad <- alphaQuad + sum(boot$bootQuad > cutQuad)
 }
 
+
+
+## bootstrap test and chi-sq tests
 set.seed(42)
 convResult <- list()
 nSeq <- c(24, 48, 96)
@@ -348,6 +366,10 @@ alpha <- alphaN <- matrix(0,2,3)
 testPower <- testPowerN <- matrix(0,2,3)
 cutChi <- qchisq(0.95, 1) / 200
 
+iRatio <- edgeRatio[1]
+iedge <- edgeLength[1]
+i <- 1
+
 for(iRatio in edgeRatio){
     for(iedge in edgeLength){
         for(i in 1:100){
@@ -358,11 +380,14 @@ for(iRatio in edgeRatio){
             ans <- obsSeq[601:604]
             attr(train, "contrast") <- attr(obsSeq, "contrast")
             attr(train, "nc") <- attr(obsSeq, "nc")
+            attr(train, "weight") <- attr(obsSeq, "weight")
+            attr(train, "index") <- attr(obsSeq, "index")
             tempSeqEM <- DNACluster(seqData = train, initP = initP, maxIter = 100, tol = 1e-8,  method = "cpp")
             theta <- tempSeqEM$theta
             Ez <- tempSeqEM$Ez
             p <- tempSeqEM$p
             y <- tempSeqEM$y
+
             bTheta <- bootTheta(theta=theta, y=y, p=p,obs=train, Ez = Ez, n=10000, percentile = 0.95)
             ## bootAns <- bootX(theta=theta, y=y, p=p, x=ans, varScore = varScore)
             cutQuad <- bTheta$qQuad
@@ -381,36 +406,72 @@ for(iRatio in edgeRatio){
 
 ##################################################
 ## CV for DNA using EM
-initPList <- list()
+##################################################
 
 
-cvDataList <- list()
-cvll <- list()
-initPList <- list()
-iter <- c(2:4)
+
+
+edgeLength <- c(0.2, 0.5, 1)
+edgeRatio <- c(1,2)
+n <- 1000
+cvll <- array(dim=c(length(edgeLength), length(edgeRatio), n, 4))
+
+for(iRatio in edgeRatio){
+    for(iedge in edgeLength){
+
+        set.seed(42)
+        iedge <- 0.2
+        iRatio <- 1
+        cvDataList <- list()
+        cvll3 <- list()
+        initPList <- list()
+
+        for(i in 1:100){
+            cvDataList$obsSeq <- simClSeq(3, 180, group = c(60, 60, 60), outLen = iedge, inLen = iedge * iRatio, l=200)
+            for(j in 1:4){
+                seqDNA <- as.DNAbin(cvDataList$obsSeq)
+                distMat <- as.matrix(dist.dna(seqDNA, model="raw"))
+                initPList[[j]] <- EMinit(distMat, j)
+            }
+            cvll3[[i]] <- cvCluster(cvDataList, 180, maxCluster = 4, mCV=100, beta=0.5, initPList = initPList)
+        }
+        cvResult <- rep(0,4)
+        for(i in 1:100){
+            colSumsCv <- colSums(cvll3[[i]])
+            cvResult <- cvResult + (colSumsCv == max(colSumsCv))
+        }
+
+    }
+}
 
 set.seed(42)
+edgeLength <- c(0.2, 0.5, 1)
+edgeRatio <- c(1,2)
+n <- 1000
+cvll <- list()
+cvResult <- array(dim=c(length(edgeLength), length(edgeRatio), n, 4))
+cvDataList <- list()
+initPList <- list()
 
-for(i in 1:1000){
-    cvDataList$obsSeq <- simClSeq(3, 50, group = c(20,15,15), outLen = 0.3, inLen = 0.1, l=200)
-    for(j in iter){
-        initPList[[j]] <- randomPMat(pDiff = 0.05, j, 50)
+for(iRatio in edgeRatio){
+    for(iedge in edgeLength){
+        for(i in 1:n){
+            cvDataList$obsSeq <- simClSeq(3, 180, group = c(60, 60, 60), outLen = iedge, inLen = iedge * iRatio, l=200)
+            for(j in 1:4){
+                seqDNA <- as.DNAbin(cvDataList$obsSeq)
+                distMat <- as.matrix(dist.dna(seqDNA, model="raw"))
+                initPList[[j]] <- EMinit(distMat, j)
+            }
+            cvll[[i]] <- cvCluster(cvDataList, 180, maxCluster = 4, mCV=100, beta=0.5, initPList = initPList)
+        }
+        cvTempResult <- rep(0,4)
+        for(i in 1:n){
+            colSumsCv <- colSums(cvll[[i]])
+            cvTempResult <- cvTempResult + (colSumsCv == max(colSumsCv))
+        }
     }
-    cvll[[i]] <- cvCluster(cvDataList, 50, maxCluster = c(2:4), mCV=100, beta=0.5, initPList = initPList)
 }
 
-cvResult <- rep(0,3)
-for(i in 1:1000){
-    colSumsCv <- colSums(cvll[[i]])
-    cvResult <- cvResult + (colSumsCv == max(colSumsCv))
-}
-
-cvResult2 <- cvResult1 <- rep(0,3)
-for(i in 1:1000){
-    maxCv <- rowSums(apply(cvll[[i]], 1, function(x) x == max(x)))
-    cvResult1 <- cvResult1 + maxCv
-    cvResult2 <- cvResult2 + (maxCv == max(maxCv))
-}
 
 nCluster <- 3
 nSeq <- seq(40, 80, by = 10)

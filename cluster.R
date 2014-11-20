@@ -188,124 +188,6 @@ mtCluster <- function(seqData,  obsHost, distMat, initP,  bf=c(0.25,0.25,0.25,0.
     list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike,lambda = lambdaHost, theta = theta)
 }
 
-##' <description>
-##' A function for doing cross-validation to determine the number of clusters.
-##' <details>
-##' @title Cross-validation for clustering.
-##' @param dataList Data is a list to be passed to clustering function.
-##' @param n Number of observations.
-##' @param maxCluster The maximum number of clusters. The cross-validation will try
-##' from 1 to maxCluster number of clusters.
-##' @param mCV The number of Monte Carlo drops for CV.
-##' @param beta The ratio of learning samples.
-##' @return A vector of mean log-likelihood for different number of clusters.
-##' @author Ziqian Zhou
-cvCluster <- function(dataList, n, maxCluster, mCV, beta, initPList){
-    nCV <- ceiling(n * beta)
-    logLikeCV <- matrix(NA, mCV, maxCluster)
-    for(i in 1:mCV){
-        trSample <- sample(1:n, nCV)
-        trSeq <- dataList$obsSeq[trSample]
-        cvSeq <- dataList$obsSeq[-trSample]
-        attributes(trSeq)$contrast <- attributes(cvSeq)$contrast <- attributes(dataList$obsSeq)$contrast
-        attributes(trSeq)$nc <- attributes(cvSeq)$nc <- attributes(dataList$obsSeq)$nc
-        cvData <- list(obsHost=dataList$obsHost[-trSample], seq=cvSeq)
-        for(j in 1:maxCluster){
-            initP <- initPList[[j]][trSample,]
-            if(j == 1) initP <- matrix(1, length(trSample),1)
-            templl <- mtCluster(trSeq, dataList$obsHost[trSample], distMat = dataList$distMat , initP = initP, CV=cvData)
-            try(logLikeCV[i,j] <- templl$logLikeCV)
-        }
-    }
-    logLikeCV
-}
-
-##' <description>
-##' Cluster observations with DNA sequences
-##' <details>
-##' @title DNA cluster
-##' @param seqData Sequence Data
-##' @param P Permutation probability matrix
-##' @param bf Base Frequency
-##' @param M Number of Clusters
-##' @param initP Initial Probability
-##' @param maxIter Maximum number of iterations
-##' @param tol Tolerance
-##' @param method Which method to use? "rlog" or "cpp"
-##' @param tol Tolerance,
-##' @return A list. $Ez is the fitted value for clustering probability.
-##' @author Ziqian Zhou
-DNACluster <- function(seqData, bf=c(0.25,0.25,0.25,0.25), initP, maxIter=200, tol=1e-4, method = "cpp", CV=NULL, P=NULL){
-    M <- dim(initP)[2]
-    n <- dim(initP)[1]
-    Ez <- initP
-    p <- colSums(initP) / n
-    nrs <- as.integer(length(seqData[[1]]))
-    ncs <- as.integer(attr(seqData,"nc"))
-    contrast <- attr(seqData, "contrast")
-    ncos <- dim(contrast)[1]
-    ##P <- list()
-    logLike.old <- NULL
-    distDNA <- matrix(,n,n)
-    y <- NULL
-    theta <- NULL
-    for(j in 1:maxIter){
-        ## E step:
-        if(method=="EMseq"){
-            emList <- EMseqR(seqData, contrast=contrast, nrs=nrs, ncs=ncs, ecps=Ez)
-            logec <- emList$ecps
-            y <- emList$y
-            theta <- emList$theta
-        }
-        if(method =="cpp"){
-            emList <- emSeqRcpp(data=seqData, contrast=contrast, nrs=nrs, ncs =ncs, ncos=ncos, ecps=Ez, MachineEps=.Machine$double.eps)
-            logec <- emList$ecps
-            y <- emList$y
-            theta <- emList$theta
-        }
-        logEz <- sweep(logec, 2, log(p), FUN="+")
-        logRowSumsEz <- apply(logEz, 1, logsumexp)
-        logLike <- sum(logRowSumsEz)
-        Ez <- exp(sweep(logEz, 1, logRowSumsEz, "-"))
-        colSums.Ez <- colSums(Ez)
-        p <- colSums.Ez / sum(colSums.Ez)
-        ## if(any(is.na(Ez))){
-        ##     warning("NA is produce in the last iteration step. Convergence failed.")
-        ##     return(list(Ez = Ez, Ez.old = Ez.old, p = p, iter = j, convergence = convergence, logLike = logLike, P=P, y=y))
-        ## }
-        if(any(is.na(Ez))){
-            Ez[which(is.na(Ez))] <- 0
-        }
-        if(j == 1) {
-            convergence <- logLike
-            Ez.old <- Ez
-        }
-        if(!is.null(logLike.old)){
-            convergence <- c(convergence, logLike)
-            if(j == 2){
-                logLike.init.increase <- logLike - logLike.old
-                Ez.old <- Ez
-            }
-            if(j > 2){
-                Ez.old <- Ez
-                if(logLike.init.increase <0) logLike.init.increase <- logLike - logLike.old
-                if(logLike - logLike.old < logLike.init.increase * tol && logLike - logLike.old >= 0) break
-            }
-        }
-        logLike.old <- logLike
-    }
-    if(!is.null(CV)){
-        n <- length(CV$seq)
-        logEzHost <- matrix(,n,M)
-        ## logec <- cvRcpp(seqData, cvData=CV$seq, PList=P, contrast=contrast, nrs=nrs, ncs=ncs, ncos=ncos, bf=bf, ecps=Ez)
-        logec <- seqCV(cvData=CV$seq,  contrast=contrast, nrs=nrs, ncs=ncs, ecps=Ez, y =y, theta= theta)
-        logEz <- sweep(logec, 2, log(p), FUN="+")
-        logRowSumsEz <- apply(logEz, 1, logsumexp)
-        logLikeCV <- sum(logRowSumsEz)
-        return(list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, logLikeCV=logLikeCV))
-    }
-    list(Ez = Ez, p = p, iter = j, convergence = convergence, logLike = logLike, P=P, y=y, theta = theta)
-}
 
 
 ##' <description>
@@ -473,10 +355,7 @@ hostCluster <- function(obsHost, distMat, initP, maxIter=200, model="normal", to
 }
 
 
-logsumexp <- function(x){
-   xmax <- which.max(x)
-   log1p(sum(exp(x[-xmax]-x[xmax]), na.rm = TRUE)) + x[xmax]
-}
+
 
 
 mcEz <- function(matlogf, p, MC = "MC", iter = NULL){
@@ -529,9 +408,6 @@ EMhost <- function(obsDist, Ez, hostLvl){
 
 
 
-sumLogLike <- function(x, M, logLike){
-    sum(logLike[cbind(1:M, x)])
-}
 
 cvHost <- function(cvDist, lambda, cvLvl, host){
     M <- length(lambda)
@@ -543,12 +419,4 @@ cvHost <- function(cvDist, lambda, cvLvl, host){
     ecps
 }
 
-EMinit <- function(distMat, k, diffP=0.05){
-    n <- dim(distMat)[1]
-    clusterLab <- pam(x = distMat, k=k, diss = FALSE, cluster.only=TRUE)
-    initP <- matrix(0, nrow = n, ncol = k)
-    initP[cbind(1:n, clusterLab)] <- diffP
-    initP <- initP + (1-diffP) / k
-    initP
-}
 
